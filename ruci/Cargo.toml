@@ -1,0 +1,39 @@
+[package]
+name = "ruci"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description.workspace = true
+
+[[bin]]
+name = "ruci"
+path = "src/main.rs"
+
+[dependencies]
+# Internal
+ruci-protocol = { path = "../ruci-protocol" }
+ruci-core = { path = "../ruci-core" }
+
+# Async
+tokio = { workspace = true }
+futures.workspace = true
+
+# CLI
+clap = { workspace = true }
+clap_complete = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# Utilities
+bytes = { workspace = true }
+flume.workspace = true
+tarpc = { workspace = true, features = ["serde-transport", "tcp"] }

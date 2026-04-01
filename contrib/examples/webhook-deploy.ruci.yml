@@ -1,0 +1,42 @@
+# Example job: Webhook-triggered deployment
+# This job is triggered by webhook events from GitHub/GitLab/Gogs
+# The VCS info will be automatically populated from webhook payload
+# Save as .ruci.yml in your project root
+
+name: webhook-deploy
+context: default
+timeout: 600
+
+# VCS will be overridden by webhook payload (vcs_url, vcs_branch, vcs_commit)
+# This serves as a template with fallback values
+vcs:
+  url: "https://github.com/example/project.git"
+  repository: "example/project"
+  branch: "main"
+  submodules: false
+
+checkout: true
+
+env:
+  CI: "true"
+  DEPLOY_ENV: "staging"
+
+steps:
+  - name: build
+    command: |
+      echo "Building for commit: $VCS_COMMIT"
+      make build
+
+  - name: test
+    command: make test
+
+  - name: deploy
+    command: |
+      echo "Deploying to $DEPLOY_ENV..."
+      ./deploy.sh --env $DEPLOY_ENV --commit $VCS_COMMIT
+
+  - name: notify
+    command: |
+      if [ "$BRANCH" = "main" ]; then
+        curl -X POST "$SLACK_WEBHOOK" -d "{\"text\":\"Deployed $COMMIT to $DEPLOY_ENV\"}"
+      fi

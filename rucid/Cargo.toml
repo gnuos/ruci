@@ -1,0 +1,48 @@
+[package]
+name = "rucid"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description.workspace = true
+
+[[bin]]
+name = "rucid"
+path = "src/main.rs"
+
+[dependencies]
+# Internal
+ruci-core = { path = "../ruci-core" }
+ruci-protocol = { path = "../ruci-protocol" }
+
+# Async
+tokio = { workspace = true }
+futures = { workspace = true }
+
+# Web
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+clap.workspace = true
+serde = { workspace = true }
+serde_json.workspace = true
+
+# Metrics
+prometheus-client = { workspace = true }
+
+# Utilities
+uuid = { version = "1.0", features = ["v4", "serde"] }
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+urlencoding = "2.1"

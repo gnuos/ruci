@@ -1,0 +1,33 @@
+# Example job: VCS-enabled with automatic git checkout
+# This job will automatically clone the repository before running steps
+# Save as .ruci.yml in your project root
+
+name: vcs-checkout-example
+context: default
+timeout: 600
+
+# VCS configuration - repository will be automatically cloned
+vcs:
+  url: "https://github.com/example/project.git"
+  repository: "example/project"
+  branch: "main"
+  submodules: false
+  # credential_id: "your-credential-id"  # Optional: reference to stored credentials
+
+# Set checkout to true (default) to enable automatic VCS checkout
+checkout: true
+
+env:
+  CI: "true"
+
+steps:
+  - name: build
+    command: make build
+
+  - name: test
+    command: make test
+
+  - name: package
+    command: make package
+    artifacts:
+      - "dist/*.tar.gz"

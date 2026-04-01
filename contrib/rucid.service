@@ -1,0 +1,31 @@
+[Unit]
+Description=Ruci CI Daemon
+After=network.target
+
+[Service]
+Type=simple
+User=ruci
+Group=ruci
+WorkingDirectory=/var/lib/ruci
+
+# Binary location
+ExecStart=/usr/local/bin/rucid --config /etc/ruci/ruci.yaml --pid-file /var/run/ruci/ruci.pid
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=rucid
+
+# Restart policy
+Restart=on-failure
+RestartSec=5s
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/ruci /var/run/ruci /var/log/ruci
+
+[Install]
+WantedBy=multi-user.target

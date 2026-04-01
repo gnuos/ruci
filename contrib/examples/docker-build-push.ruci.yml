@@ -1,0 +1,29 @@
+# Example job: Docker Build and Push
+# Save as .ruci.yml in your project root
+
+name: docker-build-push
+context: default
+timeout: 900
+
+env:
+  IMAGE_NAME: "myapp"
+  REGISTRY: "docker.io"
+  DOCKER_BUILDKIT: "1"
+
+steps:
+  - name: docker-build
+    command: |
+      docker build -t $IMAGE_NAME:$GIT_COMMIT .
+      docker tag $IMAGE_NAME:$GIT_COMMIT $REGISTRY/$IMAGE_NAME:latest
+
+  - name: docker-push
+    command: |
+      echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+      docker push $REGISTRY/$IMAGE_NAME:latest
+
+  - name: docker-tag-latest
+    command: |
+      if [ "$BRANCH" = "main" ]; then
+        docker tag $IMAGE_NAME:$GIT_COMMIT $REGISTRY/$IMAGE_NAME:stable
+        docker push $REGISTRY/$IMAGE_NAME:stable
+      fi

@@ -1,0 +1,43 @@
+# Rust build artifacts
+/target/
+Cargo.lock
+
+# Binary output directory
+/bin/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Log files
+*.log
+logs/
+
+# Database files
+*.db
+*.db-journal
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Coverage reports
+/coverage/
+*.profdata
+
+# Release builds (if using cargo release)
+#releases/
+
+# Wasm files (if any)
+*.wasm
+*.wat

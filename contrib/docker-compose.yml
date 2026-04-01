@@ -1,0 +1,29 @@
+# Ruci CI Docker Compose configuration
+# Usage: docker-compose up -d
+
+services:
+  rucid:
+    build:
+      context: ..
+      dockerfile: contrib/docker/Dockerfile
+    container_name: rucid
+    ports:
+      - "7741:7741"   # RPC port
+      - "8080:8080"   # Web UI port
+    volumes:
+      - rucid-data:/var/lib/ruci
+      - rucid-logs:/var/log/ruci
+      - /var/run/ruci:/run/ruci
+    environment:
+      - RUCID_CONFIG=/etc/ruci/ruci.yaml
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  rucid-data:
+  rucid-logs:

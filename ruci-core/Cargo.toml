@@ -1,0 +1,66 @@
+[package]
+name = "ruci-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description.workspace = true
+
+[dependencies]
+# Internal
+ruci-protocol = { path = "../ruci-protocol" }
+
+# Async
+tokio = { workspace = true }
+futures.workspace = true
+async-trait = { workspace = true }
+flume.workspace = true
+
+# Serialization
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+serde_json = { workspace = true }
+
+# Storage
+aws-sdk-s3 = { workspace = true }
+
+# Time
+chrono = { workspace = true }
+tokio-cron-scheduler = { workspace = true }
+cron = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Hash
+sha2 = { workspace = true }
+base64 = { workspace = true }
+
+# Utilities
+uuid = { workspace = true }
+once_cell = { workspace = true }
+parking_lot = { workspace = true }
+bytes = { workspace = true }
+tokio-serde = "0.9.0"
+tarpc = { workspace = true, features = ["full", "serde-transport", "tcp"] }
+aws-config = "1.8.15"
+sqlx = { version = "0.8.6", features = ["sqlite", "runtime-tokio-native-tls", "migrate", "runtime-tokio", "postgres", "chrono", "mysql"] }
+
+# Auth
+bcrypt = "0.15"
+
+# Metrics
+prometheus-client = { workspace = true }
+tar = "0.4.45"
+
+[dev-dependencies]
+tempfile = "3.27.0"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio-tar = "0.3.1"

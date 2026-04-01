@@ -1,0 +1,83 @@
+# Ruci CI Configuration Example
+# Copy to /etc/ruci/ruci.yaml or use -c flag to specify path
+
+# Server configuration
+server:
+  host: "127.0.0.0"      # RPC bind address
+  port: 7741             # RPC port
+  web_host: "127.0.0.0"  # Web UI bind address
+  web_port: 8080         # Web UI port
+  rpc_mode: "tcp"        # "tcp" or "unix"
+  unix_socket_name: "rucid"  # Unix socket name (when rpc_mode is "unix")
+
+# Database configuration
+database:
+  # SQLite (3 slashes for path, 4 for absolute)
+  url: "sqlite:///var/lib/ruci/db/ruci.db"
+  # PostgreSQL example:
+  # url: "postgresql://ruci:password@localhost:5432/ruci"
+  # MySQL example:
+  # url: "mysql://ruci:password@localhost:3306/ruci"
+
+# Storage configuration
+storage:
+  type: "local"          # "local" or "rustfs" (S3)
+  region: "us-east-1"
+  # For S3/Rustfs:
+  # type: "rustfs"
+  # endpoint: "http://localhost:9000"
+  # bucket: "ruci-artifacts"
+  # access_key: "${AWS_ACCESS_KEY_ID}"
+  # secret_key: "${AWS_SECRET_ACCESS_KEY}"
+
+# Paths configuration
+paths:
+  jobs_dir: "/var/lib/ruci/jobs"        # Job definitions storage
+  run_dir: "/var/lib/ruci/run"          # Build working directories
+  archive_dir: "/var/lib/ruci/archive"  # Archived artifacts
+  log_dir: "/var/log/ruci"              # Log files directory
+
+# Context configuration (resource limits per context)
+contexts:
+  default:
+    max_parallel: 4     # Max concurrent jobs for this context
+    timeout: 3600       # Job timeout in seconds
+    work_dir: "/var/lib/ruci/tmp"    # Working directory for job execution
+  # Add more contexts as needed:
+  # high-memory:
+  #   max_parallel: 2
+  #   timeout: 7200
+  #   work_dir: "/tmp/ruci"
+
+# Scheduled triggers
+triggers:
+  # - name: "hourly-cleanup"
+  #   cron: "0 * * * *"
+  #   job: "cleanup-job-id"
+  #   enabled: true
+
+# Logging configuration
+logging:
+  level: "info"         # trace, debug, info, warn, error
+  format: "json"        # "json" or "pretty"
+  # File logging with rotation (optional)
+  file:
+    dir: "/var/log/ruci"    # Log directory
+    max_size_mb: 100        # Max size per file (optional, default 100)
+    max_files: 7            # Number of files to retain (optional, default 7)
+
+# Archive configuration
+archive:
+  enabled: true
+  max_age_days: 30          # Days to keep archived runs
+
+# Cleanup configuration
+cleanup:
+  enabled: true
+  interval_hours: 24         # Cleanup interval
+
+# Web UI authentication
+web:
+  enabled: true
+  admin_username: "admin"    # Initial admin username
+  admin_password: "admin"    # Initial admin password (change after first login!)
