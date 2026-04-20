@@ -222,9 +222,24 @@ impl BashExecutor {
         // Read stderr
         if let Some(err) = child.stderr.take() {
             let mut reader = BufReader::new(err).lines();
-            while let Ok(Some(l)) = reader.next_line().await {
-                stderr.push_str(&l);
-                stderr.push('\n');
+            loop {
+                tokio::select! {
+                    result = reader.next_line() => {
+                        match result {
+                            Ok(Some(l)) => {
+                                stderr.push_str(&l);
+                                stderr.push('\n');
+                            }
+                            _ => break,
+                        }
+                    }
+                    _ = cancel_rx.changed() => {
+                        if *cancel_rx.borrow() {
+                            child.kill().await.ok();
+                            return Err(Error::Executor(ExecutorError::Aborted));
+                        }
+                    }
+                }
             }
         }
 

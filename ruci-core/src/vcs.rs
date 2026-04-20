@@ -59,6 +59,29 @@ impl VcsCredentials {
     }
 }
 
+/// Sanitize a URL for safe logging (redact credentials)
+fn sanitize_url_for_log(url: &str) -> String {
+    // Strip embedded credentials from URL: https://user:pass@host -> https://host
+    for scheme in &["https://", "http://", "git://"] {
+        if let Some(rest) = url.strip_prefix(scheme) {
+            if let Some(at_pos) = rest.find('@') {
+                return format!("{}<redacted>@{}", scheme, &rest[at_pos + 1..]);
+            }
+        }
+    }
+    // Strip token-based auth: https://token:x-oauth-basic@host
+    if url.contains("x-oauth-basic") || url.contains("x-token-auth") {
+        for scheme in &["https://", "http://"] {
+            if let Some(rest) = url.strip_prefix(scheme) {
+                if let Some(at_pos) = rest.find('@') {
+                    return format!("{}<redacted>@{}", scheme, &rest[at_pos + 1..]);
+                }
+            }
+        }
+    }
+    url.to_string()
+}
+
 /// VCS repository information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VcsInfo {
@@ -180,7 +203,7 @@ impl VcsOperations for GitOperations {
         work_dir: &Path,
         submodules: bool,
     ) -> Result<()> {
-        tracing::info!(url = %url, branch = %branch, work_dir = %work_dir.display(), "Cloning repository");
+        tracing::info!(url = %sanitize_url_for_log(url), branch = %branch, work_dir = %work_dir.display(), "Cloning repository");
 
         // Create parent directory if needed
         if let Some(parent) = work_dir.parent() {
@@ -214,7 +237,7 @@ impl VcsOperations for GitOperations {
     }
 
     async fn fetch(&self, url: &str, branch: &str, work_dir: &Path) -> Result<()> {
-        tracing::info!(url = %url, branch = %branch, work_dir = %work_dir.display(), "Fetching updates");
+        tracing::info!(url = %sanitize_url_for_log(url), branch = %branch, work_dir = %work_dir.display(), "Fetching updates");
 
         // Add remote if not already present
         self.run_git(&["remote", "add", "origin", url], work_dir)
@@ -289,7 +312,7 @@ pub async fn checkout(
     };
 
     tracing::info!(
-        url = %url_with_creds,
+        url = %sanitize_url_for_log(&url_with_creds),
         branch = %branch,
         commit = ?commit,
         work_dir = %work_dir.display(),

@@ -253,6 +253,32 @@ pub trait VcsCredentialRepository: Send + Sync {
     async fn delete_credential(&self, id: &str) -> Result<()>;
 }
 
+/// Session information for persistence
+#[derive(Debug, Clone)]
+pub struct SessionInfo {
+    pub id: String,
+    pub user_id: String,
+    pub username: String,
+    pub created_at: String,
+    pub expires_at: String,
+}
+
+/// Repository trait for Session operations
+#[async_trait]
+pub trait SessionRepository: Send + Sync {
+    /// Insert a new session
+    async fn insert_session(&self, session: &SessionInfo) -> Result<()>;
+
+    /// Get a session by ID
+    async fn get_session(&self, session_id: &str) -> Result<Option<SessionInfo>>;
+
+    /// Delete a session
+    async fn delete_session(&self, session_id: &str) -> Result<()>;
+
+    /// Delete expired sessions
+    async fn delete_expired_sessions(&self) -> Result<u64>;
+}
+
 /// Combined repository for all entities
 #[async_trait]
 pub trait Repository:
@@ -263,6 +289,7 @@ pub trait Repository:
     + TriggerRepository
     + WebhookRepository
     + VcsCredentialRepository
+    + SessionRepository
     + Send
     + Sync
 {

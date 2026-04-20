@@ -107,6 +107,8 @@ pub struct StorageConfig {
     pub access_key: Option<String>,
     pub secret_key: Option<String>,
     pub region: String,
+    /// Maximum artifact size in MB (default: 100)
+    pub max_artifact_size_mb: Option<u64>,
 }
 
 impl Default for StorageConfig {
@@ -118,6 +120,7 @@ impl Default for StorageConfig {
             access_key: None,
             secret_key: None,
             region: "us-east-1".to_string(),
+            max_artifact_size_mb: Some(100),
         }
     }
 }
@@ -392,19 +395,22 @@ impl Config {
     pub fn resolve_env(&self, value: &str) -> String {
         // Simple env var resolution: ${VAR} -> env::var(VAR)
         let mut result = value.to_string();
-        while let Some(start) = result.find("${") {
-            if let Some(end) = result[start..].find('}') {
-                let var_name = &result[start + 2..start + end];
+        let mut search_from = 0;
+        while let Some(start) = result[search_from..].find("${") {
+            let abs_start = search_from + start;
+            if let Some(end) = result[abs_start..].find('}') {
+                let var_name = &result[abs_start + 2..abs_start + end];
                 if let Ok(var_value) = std::env::var(var_name) {
                     result = format!(
                         "{}{}{}",
-                        &result[..start],
+                        &result[..abs_start],
                         var_value,
-                        &result[start + end + 1..]
+                        &result[abs_start + end + 1..]
                     );
+                    search_from = abs_start + var_value.len();
                 } else {
-                    // Keep as-is if env var not found
-                    break;
+                    // Skip unresolved var, continue searching after it
+                    search_from = abs_start + end + 1;
                 }
             } else {
                 break;
@@ -919,11 +925,12 @@ mod tests {
     #[test]
     fn test_resolve_env_missing_var() {
         std::env::remove_var("NONEXISTENT_VAR_12345");
+        std::env::set_var("EXIST_VAR", "resolved");
         let config = Config::default();
-        // When env var doesn't exist, should return as-is up to the broken ${...}
-        let result = config.resolve_env("prefix_${NONEXISTENT_VAR_12345}_suffix");
-        // The implementation breaks on missing var, keeping prefix_ and the rest
-        assert!(result.contains("prefix_"));
+        // Missing var should be kept as-is, but subsequent vars should still resolve
+        let result = config.resolve_env("prefix_${NONEXISTENT_VAR_12345}_${EXIST_VAR}_suffix");
+        assert_eq!(result, "prefix_${NONEXISTENT_VAR_12345}_resolved_suffix");
+        std::env::remove_var("EXIST_VAR");
     }
 
     #[test]

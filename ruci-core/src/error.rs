@@ -196,25 +196,7 @@ pub enum RpcError {
     Timeout,
 }
 
-// ═══════════════════════════════════════════════════════════════
-// Plugin System Errors (extensible)
-// ═══════════════════════════════════════════════════════════════
 
-/// Plugin-related errors (for future extension)
-#[derive(Error, Debug)]
-pub enum PluginError {
-    #[error("Plugin not found: {0}")]
-    NotFound(String),
-
-    #[error("Plugin load error: {0}")]
-    LoadError(String),
-
-    #[error("Plugin initialization error: {0}")]
-    InitError(String),
-
-    #[error("Plugin hook error: {0}")]
-    HookError(String),
-}
 
 #[cfg(test)]
 mod tests {
@@ -366,23 +348,7 @@ mod tests {
         assert_eq!(err.to_string(), "Timeout");
     }
 
-    #[test]
-    fn test_plugin_error_display() {
-        let err = PluginError::NotFound("docker".to_string());
-        assert_eq!(err.to_string(), "Plugin not found: docker");
 
-        let err = PluginError::LoadError("symbol not found".to_string());
-        assert_eq!(err.to_string(), "Plugin load error: symbol not found");
-
-        let err = PluginError::InitError("config invalid".to_string());
-        assert_eq!(
-            err.to_string(),
-            "Plugin initialization error: config invalid"
-        );
-
-        let err = PluginError::HookError("pre-exec failed".to_string());
-        assert_eq!(err.to_string(), "Plugin hook error: pre-exec failed");
-    }
 
     #[test]
     fn test_main_error_display() {

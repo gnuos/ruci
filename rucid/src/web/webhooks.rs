@@ -216,9 +216,16 @@ fn verify_github_signature(secret: &str, payload: &[u8], signature: &str) -> boo
     hex == signature
 }
 
-/// Verify GitLab/Gogs secret token (simple string comparison)
+/// Verify GitLab/Gogs secret token (constant-time comparison)
 fn verify_gitlab_token(secret: &str, token: &str) -> bool {
-    secret == token
+    if secret.len() != token.len() {
+        return false;
+    }
+    secret
+        .bytes()
+        .zip(token.bytes())
+        .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+        == 0
 }
 
 /// Extract branch name from ref (e.g., "refs/heads/main" -> "main")

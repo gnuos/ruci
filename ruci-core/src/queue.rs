@@ -21,19 +21,40 @@ pub struct QueueRequest {
 pub struct JobQueue {
     sender: Sender<QueueRequest>,
     receiver: Receiver<QueueRequest>,
+    max_size: usize,
 }
 
 impl JobQueue {
-    /// Create a new job queue
+    /// Create a new job queue with default size (1000)
     pub fn new() -> Self {
-        let (sender, receiver) = flume::unbounded();
-        Self { sender, receiver }
+        Self::with_capacity(1000)
+    }
+
+    /// Create a new job queue with a specified maximum size
+    pub fn with_capacity(max_size: usize) -> Self {
+        let (sender, receiver) = flume::bounded(max_size);
+        Self {
+            sender,
+            receiver,
+            max_size,
+        }
     }
 
     /// Enqueue a job (producer side)
     pub async fn enqueue(&self, req: QueueRequest) -> Result<()> {
         let job_id = req.job_id.clone();
         let run_id = req.run_id.clone();
+
+        if self.len() >= self.max_size {
+            tracing::warn!(
+                job_id = %job_id,
+                queue_len = %self.len(),
+                max_size = %self.max_size,
+                "Queue is full, rejecting job"
+            );
+            return Err(crate::error::Error::Queue(QueueError::Full));
+        }
+
         tracing::debug!(job_id=%job_id, run_id=%run_id, queue_len=%self.len(), "Enqueuing job");
 
         self.sender.send_async(req).await.map_err(|e| {

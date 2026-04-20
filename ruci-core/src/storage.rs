@@ -47,20 +47,77 @@ fn calculate_checksum(path: &Path) -> Result<String> {
     Ok(base64::engine::general_purpose::STANDARD.encode(hasher.finalize()))
 }
 
+/// Validate that a storage key is safe (no path traversal)
+fn validate_key(key: &str) -> Result<()> {
+    if key.is_empty() {
+        return Err(StorageError::Local("Empty storage key".to_string()).into());
+    }
+    if key.starts_with('/') || key.starts_with('\\') {
+        return Err(StorageError::Local(format!(
+            "Storage key must not start with separator: {}",
+            key
+        )).into());
+    }
+    // Normalize and check for path traversal
+    let path = Path::new(key);
+    let mut depth = 0usize;
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(_) => depth += 1,
+            std::path::Component::ParentDir => {
+                if depth == 0 {
+                    return Err(StorageError::Local(format!(
+                        "Path traversal detected in key: {}",
+                        key
+                    )).into());
+                }
+                depth = depth.saturating_sub(1);
+            }
+            std::path::Component::CurDir => {}
+            _ => {
+                return Err(StorageError::Local(format!(
+                    "Invalid path component in key: {}",
+                    key
+                )).into());
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Local filesystem storage backend
 pub struct LocalStorage {
     base_path: PathBuf,
+    max_artifact_size: u64,
 }
 
 impl LocalStorage {
-    pub fn new(base_path: &str) -> Self {
+    pub fn new(base_path: &str, max_artifact_size_mb: u64) -> Self {
         Self {
             base_path: PathBuf::from(base_path),
+            max_artifact_size: max_artifact_size_mb * 1024 * 1024,
         }
     }
 
-    fn resolve_key(&self, key: &str) -> PathBuf {
-        self.base_path.join(key)
+    fn resolve_key(&self, key: &str) -> Result<PathBuf> {
+        validate_key(key)?;
+        let resolved = self.base_path.join(key);
+        // Ensure the resolved path is still under base_path
+        let canonical_base = self
+            .base_path
+            .canonicalize()
+            .unwrap_or_else(|_| self.base_path.clone());
+        let canonical_resolved = resolved
+            .canonicalize()
+            .unwrap_or_else(|_| resolved.clone());
+        if !canonical_resolved.starts_with(&canonical_base) {
+            return Err(StorageError::Local(format!(
+                "Resolved path escapes storage base: {}",
+                key
+            ))
+            .into());
+        }
+        Ok(resolved)
     }
 }
 
@@ -68,7 +125,19 @@ impl LocalStorage {
 impl Storage for LocalStorage {
     async fn upload(&self, key: &str, path: &Path) -> Result<StorageHandle> {
         tracing::debug!(key=%key, path=%path.display(), "Uploading file to local storage");
-        let dest = self.resolve_key(key);
+        let dest = self.resolve_key(key)?;
+
+        // Check file size against limit
+        let src_metadata = std::fs::metadata(path)
+            .map_err(|e| StorageError::Local(format!("Cannot read source metadata: {}", e)))?;
+        if self.max_artifact_size > 0 && src_metadata.len() > self.max_artifact_size {
+            return Err(StorageError::Local(format!(
+                "Artifact size {} bytes exceeds limit {} bytes",
+                src_metadata.len(),
+                self.max_artifact_size
+            ))
+            .into());
+        }
 
         if let Some(parent) = dest.parent() {
             if let Err(e) = std::fs::create_dir_all(parent) {
@@ -109,7 +178,7 @@ impl Storage for LocalStorage {
     }
 
     async fn download(&self, key: &str) -> Result<Vec<u8>> {
-        let path = self.resolve_key(key);
+        let path = self.resolve_key(key)?;
         tracing::debug!(key=%key, path=%path.display(), "Downloading from local storage");
         std::fs::read(&path).map_err(|e| {
             match e.kind() {
@@ -130,11 +199,11 @@ impl Storage for LocalStorage {
     }
 
     async fn exists(&self, key: &str) -> bool {
-        self.resolve_key(key).exists()
+        self.resolve_key(key).map(|p| p.exists()).unwrap_or(false)
     }
 
     async fn delete(&self, key: &str) -> Result<()> {
-        let path = self.resolve_key(key);
+        let path = self.resolve_key(key)?;
         tracing::debug!(key=%key, path=%path.display(), "Deleting from local storage");
         std::fs::remove_file(path).map_err(|e| {
             match e.kind() {
@@ -307,10 +376,11 @@ impl Storage for S3Storage {
 
 /// Create a storage backend based on configuration
 pub async fn create_storage(config: &StorageConfig) -> Result<Box<dyn Storage>> {
+    let max_size_mb = config.max_artifact_size_mb.unwrap_or(100);
     match config.storage_type {
         StorageType::Local => {
             let path = config.bucket.as_deref().unwrap_or("/var/lib/ruci/archive");
-            Ok(Box::new(LocalStorage::new(path)))
+            Ok(Box::new(LocalStorage::new(path, max_size_mb)))
         }
         StorageType::Rustfs => {
             let storage = S3Storage::new(config).await?;
@@ -343,7 +413,7 @@ mod tests {
     #[tokio::test]
     async fn test_local_storage_upload_download() {
         let temp_dir = create_temp_dir();
-        let storage = LocalStorage::new(temp_dir.path().to_str().unwrap());
+        let storage = LocalStorage::new(temp_dir.path().to_str().unwrap(), 1000);
 
         // Create a test file
         let test_content = b"Hello, Local Storage!";
@@ -370,7 +440,7 @@ mod tests {
     #[tokio::test]
     async fn test_local_storage_exists() {
         let temp_dir = create_temp_dir();
-        let storage = LocalStorage::new(temp_dir.path().to_str().unwrap());
+        let storage = LocalStorage::new(temp_dir.path().to_str().unwrap(), 1000);
 
         // Create and upload a test file
         let mut temp_file = tempfile::NamedTempFile::new().unwrap();
@@ -388,7 +458,7 @@ mod tests {
     #[tokio::test]
     async fn test_local_storage_delete() {
         let temp_dir = create_temp_dir();
-        let storage = LocalStorage::new(temp_dir.path().to_str().unwrap());
+        let storage = LocalStorage::new(temp_dir.path().to_str().unwrap(), 1000);
 
         // Create and upload a test file
         let mut temp_file = tempfile::NamedTempFile::new().unwrap();
@@ -408,7 +478,7 @@ mod tests {
     #[tokio::test]
     async fn test_local_storage_delete_not_found() {
         let temp_dir = create_temp_dir();
-        let storage = LocalStorage::new(temp_dir.path().to_str().unwrap());
+        let storage = LocalStorage::new(temp_dir.path().to_str().unwrap(), 1000);
 
         // Deleting non-existing key should return error
         let result = storage.delete("non-existing").await;
@@ -418,7 +488,7 @@ mod tests {
     #[tokio::test]
     async fn test_local_storage_download_not_found() {
         let temp_dir = create_temp_dir();
-        let storage = LocalStorage::new(temp_dir.path().to_str().unwrap());
+        let storage = LocalStorage::new(temp_dir.path().to_str().unwrap(), 1000);
 
         let result = storage.download("non-existing").await;
         assert!(result.is_err());
@@ -438,14 +508,14 @@ mod tests {
 
     #[test]
     fn test_local_storage_url() {
-        let storage = LocalStorage::new("/tmp/storage");
+        let storage = LocalStorage::new("/tmp/storage", 1000);
         assert!(storage.url("any-key").is_none());
     }
 
     #[tokio::test]
     async fn test_local_storage_nested_path() {
         let temp_dir = create_temp_dir();
-        let storage = LocalStorage::new(temp_dir.path().to_str().unwrap());
+        let storage = LocalStorage::new(temp_dir.path().to_str().unwrap(), 1000);
 
         // Create and upload a test file with nested path
         let mut temp_file = tempfile::NamedTempFile::new().unwrap();
@@ -469,7 +539,7 @@ mod tests {
     #[tokio::test]
     async fn test_local_storage_overwrite() {
         let temp_dir = create_temp_dir();
-        let storage = LocalStorage::new(temp_dir.path().to_str().unwrap());
+        let storage = LocalStorage::new(temp_dir.path().to_str().unwrap(), 1000);
 
         // Upload first version
         let mut temp_file1 = tempfile::NamedTempFile::new().unwrap();
@@ -554,7 +624,7 @@ mod tests {
     #[tokio::test]
     async fn test_local_storage_large_file() {
         let temp_dir = create_temp_dir();
-        let storage = LocalStorage::new(temp_dir.path().to_str().unwrap());
+        let storage = LocalStorage::new(temp_dir.path().to_str().unwrap(), 1000);
 
         // Create a larger test file
         let large_content = vec![0u8; 1024 * 100]; // 100KB
@@ -575,7 +645,7 @@ mod tests {
     #[tokio::test]
     async fn test_local_storage_binary_content() {
         let temp_dir = create_temp_dir();
-        let storage = LocalStorage::new(temp_dir.path().to_str().unwrap());
+        let storage = LocalStorage::new(temp_dir.path().to_str().unwrap(), 1000);
 
         // Binary content with null bytes
         let binary_content = b"\x00\x01\x02\xff\xfe\xfd\x00\xff";
@@ -607,7 +677,7 @@ mod tests {
     #[test]
     fn test_local_storage_resolve_key() {
         let temp_dir = create_temp_dir();
-        let storage = LocalStorage::new(temp_dir.path().to_str().unwrap());
+        let storage = LocalStorage::new(temp_dir.path().to_str().unwrap(), 1000);
 
         // resolve_key is private but we can test indirectly via upload/download
         // Just verify the storage was created correctly
@@ -617,7 +687,7 @@ mod tests {
     #[tokio::test]
     async fn test_local_storage_special_characters_in_key() {
         let temp_dir = create_temp_dir();
-        let storage = LocalStorage::new(temp_dir.path().to_str().unwrap());
+        let storage = LocalStorage::new(temp_dir.path().to_str().unwrap(), 1000);
 
         let mut temp_file = tempfile::NamedTempFile::new().unwrap();
         temp_file.write_all(b"content").unwrap();
@@ -634,7 +704,7 @@ mod tests {
     #[tokio::test]
     async fn test_local_storage_unicode_content() {
         let temp_dir = create_temp_dir();
-        let storage = LocalStorage::new(temp_dir.path().to_str().unwrap());
+        let storage = LocalStorage::new(temp_dir.path().to_str().unwrap(), 1000);
 
         // Unicode content
         let unicode_content = "你好世界 🌍 مرحبا";
@@ -654,7 +724,7 @@ mod tests {
     #[tokio::test]
     async fn test_local_storage_download_after_delete() {
         let temp_dir = create_temp_dir();
-        let storage = LocalStorage::new(temp_dir.path().to_str().unwrap());
+        let storage = LocalStorage::new(temp_dir.path().to_str().unwrap(), 1000);
 
         let mut temp_file = tempfile::NamedTempFile::new().unwrap();
         temp_file.write_all(b"to be deleted").unwrap();
@@ -686,6 +756,7 @@ mod tests {
                 std::env::var("S3_SECRET_KEY").unwrap_or_else(|_| "minioadmin".to_string()),
             ),
             region: std::env::var("S3_REGION").unwrap_or_else(|_| "us-east-1".to_string()),
+            max_artifact_size_mb: Some(1000),
         }
     }
 

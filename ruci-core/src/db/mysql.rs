@@ -10,9 +10,10 @@ use crate::error::{DbError, Result};
 use ruci_protocol::{ArtifactInfo, JobInfo, RunInfo, RunStatus};
 
 use super::repository::{
-    ArtifactRepository, JobRepository, Repository, RunRepository, TriggerInfo, TriggerRepository,
-    UserInfo, UserRepository, VcsCredentialInfo, VcsCredentialRepository, WebhookFilter,
-    WebhookRepository, WebhookSource, WebhookTriggerInfo,
+    ArtifactRepository, JobRepository, Repository, RunRepository, SessionInfo,
+    SessionRepository, TriggerInfo, TriggerRepository, UserInfo, UserRepository,
+    VcsCredentialInfo, VcsCredentialRepository, WebhookFilter, WebhookRepository, WebhookSource,
+    WebhookTriggerInfo,
 };
 
 /// MySQL repository implementation
@@ -114,6 +115,15 @@ impl MysqlRepository {
             );
 
             CREATE INDEX idx_vcs_credentials_name ON vcs_credentials(name);
+
+            CREATE TABLE IF NOT EXISTS sessions (
+                id VARCHAR(255) PRIMARY KEY,
+                user_id VARCHAR(255) NOT NULL,
+                username VARCHAR(255) NOT NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                expires_at DATETIME NOT NULL,
+                INDEX idx_sessions_expires_at (expires_at)
+            );
             "#,
         )
         .execute(&self.pool)
@@ -211,20 +221,40 @@ impl RunRepository for MysqlRepository {
         status: &str,
         exit_code: Option<i32>,
     ) -> Result<()> {
-        let finished_at = matches!(status, "SUCCESS" | "FAILED" | "ABORTED")
-            .then(|| "NOW()")
-            .unwrap_or("NULL");
+        let is_terminal = matches!(status, "SUCCESS" | "FAILED" | "ABORTED");
+        let is_running = status == "RUNNING";
 
-        sqlx::query(&format!(
-            "UPDATE runs SET status = ?, exit_code = ?, finished_at = {} WHERE id = ?",
-            finished_at
-        ))
-        .bind(status)
-        .bind(exit_code)
-        .bind(run_id)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DbError::Query(e.to_string()))?;
+        if is_terminal {
+            sqlx::query(
+                "UPDATE runs SET status = ?, exit_code = ?, finished_at = NOW() WHERE id = ?",
+            )
+            .bind(status)
+            .bind(exit_code)
+            .bind(run_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DbError::Query(e.to_string()))?;
+        } else if is_running {
+            sqlx::query(
+                "UPDATE runs SET status = ?, exit_code = ?, started_at = NOW(), finished_at = NULL WHERE id = ?",
+            )
+            .bind(status)
+            .bind(exit_code)
+            .bind(run_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DbError::Query(e.to_string()))?;
+        } else {
+            sqlx::query(
+                "UPDATE runs SET status = ?, exit_code = ?, finished_at = NULL WHERE id = ?",
+            )
+            .bind(status)
+            .bind(exit_code)
+            .bind(run_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DbError::Query(e.to_string()))?;
+        }
 
         Ok(())
     }
@@ -233,7 +263,7 @@ impl RunRepository for MysqlRepository {
         let row: Option<RunRow> = sqlx::query_as(
             r#"
             SELECT r.id, r.job_id, j.name as job_name, r.build_num, r.status,
-                   r.started_at, r.finished_at, r.created_at
+                   r.started_at, r.finished_at, r.exit_code, r.created_at
             FROM runs r
             JOIN jobs j ON r.job_id = j.id
             WHERE r.id = ?
@@ -251,7 +281,7 @@ impl RunRepository for MysqlRepository {
         let rows: Vec<RunRow> = sqlx::query_as(
             r#"
             SELECT r.id, r.job_id, j.name as job_name, r.build_num, r.status,
-                   r.started_at, r.finished_at, r.created_at
+                   r.started_at, r.finished_at, r.exit_code, r.created_at
             FROM runs r
             JOIN jobs j ON r.job_id = j.id
             WHERE r.status = ?
@@ -729,6 +759,62 @@ impl From<TriggerRow> for TriggerInfo {
     }
 }
 
+#[async_trait]
+impl SessionRepository for MysqlRepository {
+    async fn insert_session(&self, session: &SessionInfo) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO sessions (id, user_id, username, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(&session.id)
+        .bind(&session.user_id)
+        .bind(&session.username)
+        .bind(&session.created_at)
+        .bind(&session.expires_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError::Query(e.to_string()))?;
+
+        Ok(())
+    }
+
+    async fn get_session(&self, session_id: &str) -> Result<Option<SessionInfo>> {
+        let row: Option<(String, String, String, String, String)> = sqlx::query_as(
+            "SELECT id, user_id, username, created_at, expires_at FROM sessions WHERE id = ?",
+        )
+        .bind(session_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| DbError::Query(e.to_string()))?;
+
+        Ok(row.map(|r| SessionInfo {
+            id: r.0,
+            user_id: r.1,
+            username: r.2,
+            created_at: r.3,
+            expires_at: r.4,
+        }))
+    }
+
+    async fn delete_session(&self, session_id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM sessions WHERE id = ?")
+            .bind(session_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DbError::Query(e.to_string()))?;
+
+        Ok(())
+    }
+
+    async fn delete_expired_sessions(&self) -> Result<u64> {
+        let result = sqlx::query("DELETE FROM sessions WHERE expires_at < NOW()")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DbError::Query(e.to_string()))?;
+
+        Ok(result.rows_affected())
+    }
+}
+
 // Implement combined Repository trait for MysqlRepository
 #[async_trait]
 impl Repository for MysqlRepository {
@@ -770,6 +856,7 @@ struct RunRow {
     status: String,
     started_at: Option<chrono::DateTime<chrono::Utc>>,
     finished_at: Option<chrono::DateTime<chrono::Utc>>,
+    exit_code: Option<i32>,
     created_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -790,7 +877,7 @@ impl From<RunRow> for RunInfo {
             },
             started_at: row.started_at,
             finished_at: row.finished_at,
-            exit_code: None,
+            exit_code: row.exit_code,
         }
     }
 }
