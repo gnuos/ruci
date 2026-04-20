@@ -16,6 +16,17 @@ use serde::Deserialize;
 use crate::AppContext;
 use ruci_core::db::{WebhookEvent, WebhookFilter, WebhookSource, WebhookTriggerInfo};
 
+/// Log and unwrap a DB result, returning default on error
+async fn db_or_default<T: Default>(result: Result<T, ruci_core::error::Error>, op: &str) -> T {
+    match result {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!("DB operation '{}' failed: {}", op, e);
+            T::default()
+        }
+    }
+}
+
 /// Application state shared across handlers
 #[derive(Clone)]
 pub struct AppState {
@@ -72,8 +83,9 @@ fn base_html(title: &str, content: &str) -> String {
 <body class="bg-gray-900 text-gray-100 min-h-screen">
     <nav class="bg-gray-800 border-b border-gray-700 px-6 py-4">
         <div class="container mx-auto flex justify-between items-center">
-            <a href="/ui/jobs" class="text-xl font-bold text-blue-400">Ruci CI</a>
+            <a href="/" class="text-xl font-bold text-blue-400">Ruci CI</a>
             <div class="flex items-center gap-4">
+                <a href="/" class="hover:text-blue-400">Dashboard</a>
                 <a href="/ui/jobs" class="hover:text-blue-400">Jobs</a>
                 <a href="/ui/runs" class="hover:text-blue-400">Runs</a>
                 <a href="/ui/queue" class="hover:text-blue-400">Queue</a>
@@ -160,7 +172,7 @@ pub async fn login_handler(State(state): State<AppState>, Form(form): Form<Login
                 "{}={}; HttpOnly; Path=/; SameSite=Strict",
                 SESSION_COOKIE, session.session_id
             );
-            let response = axum::response::Redirect::to("/ui/jobs").into_response();
+            let response = axum::response::Redirect::to("/").into_response();
             let headers = HeaderMap::from_iter([(
                 header::SET_COOKIE,
                 HeaderValue::from_str(&cookie).unwrap(),
@@ -216,6 +228,144 @@ pub async fn logout_handler() -> Response {
     let headers =
         HeaderMap::from_iter([(header::SET_COOKIE, HeaderValue::from_str(&cookie).unwrap())]);
     (headers, response).into_response()
+}
+
+/// Dashboard homepage handler
+pub async fn dashboard_page(State(state): State<AppState>, cookies: HeaderMap) -> Response {
+    if get_session_from_cookies(&state.context.auth, &cookies).is_none() {
+        return axum::response::Redirect::to("/ui/login").into_response();
+    }
+
+    let jobs = db_or_default(state.context.db.list_jobs().await, "dashboard.list_jobs").await;
+    let queued = db_or_default(
+        state.context.db.list_runs_by_status("QUEUED").await,
+        "dashboard.list_queued",
+    )
+    .await;
+    let running = db_or_default(
+        state.context.db.list_runs_by_status("RUNNING").await,
+        "dashboard.list_running",
+    )
+    .await;
+
+    // Recent runs (collect from DB by combining statuses)
+    let mut recent_runs: Vec<_> = {
+        let success = state
+            .context
+            .db
+            .list_runs_by_status("SUCCESS")
+            .await
+            .unwrap_or_default();
+        let failed = state
+            .context
+            .db
+            .list_runs_by_status("FAILED")
+            .await
+            .unwrap_or_default();
+        let aborted = state
+            .context
+            .db
+            .list_runs_by_status("ABORTED")
+            .await
+            .unwrap_or_default();
+        success
+            .into_iter()
+            .chain(failed)
+            .chain(aborted)
+            .collect()
+    };
+    recent_runs.sort_by(|a, b| b.build_num.cmp(&a.build_num));
+    recent_runs.truncate(10);
+
+    let recent_runs_html: String = if recent_runs.is_empty() {
+        r#"<p class="text-gray-500 text-sm">No completed runs yet</p>"#.to_string()
+    } else {
+        recent_runs
+            .iter()
+            .map(|r| {
+                format!(
+                    r#"<div class="flex justify-between items-center py-2 border-b border-gray-700">
+                        <div>
+                            <a href="/ui/runs/{}" class="text-blue-400 hover:underline">{}</a>
+                            <span class="text-gray-500 text-sm ml-2">#{}: {}</span>
+                        </div>
+                        {}
+                    </div>"#,
+                    r.id,
+                    r.job_name,
+                    r.build_num,
+                    r.id,
+                    status_badge(&r.status.to_string())
+                )
+            })
+            .collect()
+    };
+
+    let running_html: String = if running.is_empty() {
+        r#"<p class="text-gray-500 text-sm">No jobs running</p>"#.to_string()
+    } else {
+        running
+            .iter()
+            .map(|r| {
+                format!(
+                    r#"<div class="flex justify-between items-center py-2 border-b border-gray-700">
+                        <div>
+                            <a href="/ui/runs/{}" class="text-blue-400 hover:underline">{}</a>
+                            <span class="text-gray-500 text-sm ml-2">#{}: {}</span>
+                        </div>
+                        {}
+                    </div>"#,
+                    r.id,
+                    r.job_name,
+                    r.build_num,
+                    r.id,
+                    status_badge(&r.status.to_string())
+                )
+            })
+            .collect()
+    };
+
+    let content = format!(
+        r#"<h1 class="text-2xl font-bold mb-6">Dashboard</h1>
+
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+            <a href="/ui/jobs" class="bg-gray-800 rounded-lg border border-gray-700 p-6 hover:border-blue-500 transition">
+                <div class="text-3xl font-bold text-blue-400">{}</div>
+                <div class="text-gray-400 text-sm mt-1">Total Jobs</div>
+            </a>
+            <a href="/ui/queue" class="bg-gray-800 rounded-lg border border-gray-700 p-6 hover:border-yellow-500 transition">
+                <div class="text-3xl font-bold text-yellow-400">{}</div>
+                <div class="text-gray-400 text-sm mt-1">Queued</div>
+            </a>
+            <div class="bg-gray-800 rounded-lg border border-gray-700 p-6">
+                <div class="text-3xl font-bold text-green-400">{}</div>
+                <div class="text-gray-400 text-sm mt-1">Running</div>
+            </div>
+            <div class="bg-gray-800 rounded-lg border border-gray-700 p-6">
+                <div class="text-3xl font-bold text-gray-400">{}</div>
+                <div class="text-gray-400 text-sm mt-1">Queued (Queue)</div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="bg-gray-800 rounded-lg border border-gray-700 p-6">
+                <h2 class="text-lg font-semibold mb-4">Running Now</h2>
+                {}
+            </div>
+            <div class="bg-gray-800 rounded-lg border border-gray-700 p-6">
+                <h2 class="text-lg font-semibold mb-4">Recent Runs</h2>
+                {}
+            </div>
+        </div>"#,
+        jobs.len(),
+        queued.len(),
+        running.len(),
+        queued.len(),
+        running_html,
+        recent_runs_html
+    );
+
+    Html(base_html("Dashboard", &content)).into_response()
 }
 
 /// Jobs list page handler
@@ -681,12 +831,59 @@ pub async fn queue_page(State(state): State<AppState>, cookies: HeaderMap) -> Re
     Html(base_html("Queue", &content)).into_response()
 }
 
+/// Sanitize a path component to prevent path traversal
+fn sanitize_path_component(s: &str) -> bool {
+    !s.is_empty()
+        && !s.contains('/')
+        && !s.contains('\\')
+        && !s.contains("..")
+        && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
 /// SSE log streaming handler
 pub async fn log_stream_handler(
     State(state): State<AppState>,
     axum::extract::Path(run_id): axum::extract::Path<String>,
 ) -> Response {
-    let log_path = format!("{}/{}.log", state.context.config.paths.log_dir, run_id);
+    if !sanitize_path_component(&run_id) {
+        let body =
+            Body::from("data: {\"type\":\"error\",\"message\":\"Invalid run ID\"}\n\n");
+        return axum::http::Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/event-stream")
+            .header(header::CACHE_CONTROL, "no-cache")
+            .body(body)
+            .unwrap();
+    }
+
+    let log_path = match state.context.db.get_run(&run_id).await {
+        Ok(Some(run)) => format!(
+            "{}/{}/{}/output.log",
+            state.context.config.paths.run_dir, run.job_id, run_id
+        ),
+        Ok(None) => {
+            let body =
+                Body::from("data: {\"type\":\"error\",\"message\":\"Run not found\"}\n\n");
+            return axum::http::Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "text/event-stream")
+                .header(header::CACHE_CONTROL, "no-cache")
+                .body(body)
+                .unwrap();
+        }
+        Err(e) => {
+            let body = Body::from(format!(
+                "data: {{\"type\":\"error\",\"message\":\"Database error: {}\"}}\n\n",
+                e
+            ));
+            return axum::http::Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "text/event-stream")
+                .header(header::CACHE_CONTROL, "no-cache")
+                .body(body)
+                .unwrap();
+        }
+    };
 
     if !std::path::Path::new(&log_path).exists() {
         let body = Body::from("data: {\"type\":\"error\",\"message\":\"Log file not found\"}\n\n");

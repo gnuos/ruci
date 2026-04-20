@@ -19,7 +19,6 @@ use ruci_core::{
     config::Config,
     executor::{BashExecutor, ExecutionContext, Executor, Job},
     rpc::RpcServer,
-    storage,
     vcs::{self, GitOperations},
     AppContext,
 };
@@ -201,7 +200,7 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     // Load configuration
-    let config = if let Some(ref cfg_path) = cli.config {
+    let mut config = if let Some(ref cfg_path) = cli.config {
         Config::load(&cfg_path)?
     } else {
         Config::load_auto()?
@@ -252,7 +251,9 @@ async fn main() -> anyhow::Result<()> {
                     tracing::info!("Configuration reloaded successfully");
                     // Update logging if changed
                     init_logging(&new_config.logging);
-                    // Continue loop with new config
+                    // Apply new config for next server iteration
+                    config = new_config;
+                    tracing::info!("New configuration applied, restarting services...");
                 }
                 Err(e) => {
                     tracing::error!(
@@ -281,17 +282,14 @@ async fn run_server(config: Config, socket_path: PathBuf) -> anyhow::Result<bool
     // Create executor
     let executor: Arc<dyn Executor> = Arc::new(BashExecutor::new(Arc::new(config.clone())));
 
-    // Create storage
-    let storage = storage::create_storage(&config.storage).await?;
-
-    // Create RPC server
+    // Create RPC server (reuse storage from context)
     let rpc_server = RpcServer::new(
         Arc::new(config.clone()),
         socket_path.clone(),
         context.db.clone(),
         context.queue.clone(),
         executor.clone(),
-        Arc::from(storage),
+        context.storage.clone(),
     );
 
     // Create trigger scheduler if triggers are configured
@@ -353,8 +351,17 @@ async fn run_server(config: Config, socket_path: PathBuf) -> anyhow::Result<bool
             use web::handlers;
 
             let cors = CorsLayer::new()
-                .allow_origin(Any)
-                .allow_methods(Any)
+                .allow_origin([
+                    format!("http://{}:{}", context_web.config.server.web_host, context_web.config.server.web_port)
+                        .parse::<axum::http::HeaderValue>()
+                        .unwrap_or_else(|_| "http://localhost:8080".parse().unwrap()),
+                    format!("https://{}:{}", context_web.config.server.web_host, context_web.config.server.web_port)
+                        .parse::<axum::http::HeaderValue>()
+                        .unwrap_or_else(|_| "https://localhost:8080".parse().unwrap()),
+                    "http://localhost:8080".parse::<axum::http::HeaderValue>().unwrap(),
+                    "http://127.0.0.1:8080".parse::<axum::http::HeaderValue>().unwrap(),
+                ])
+                .allow_methods([axum::http::Method::GET, axum::http::Method::POST, axum::http::Method::DELETE])
                 .allow_headers(Any);
 
             let app_state = handlers::AppState {
@@ -376,6 +383,8 @@ async fn run_server(config: Config, socket_path: PathBuf) -> anyhow::Result<bool
                 .route("/health", get(health_handler))
                 .route("/metrics", get(metrics_handler))
                 // Web UI routes
+                .route("/", get(handlers::dashboard_page))
+                .route("/ui/dashboard", get(handlers::dashboard_page))
                 .route("/ui/login", get(handlers::login_page))
                 .route("/ui/login", post(handlers::login_handler))
                 .route("/ui/logout", post(handlers::logout_handler))
@@ -539,11 +548,22 @@ async fn run_server(config: Config, socket_path: PathBuf) -> anyhow::Result<bool
                 // Perform VCS checkout if job has VCS configured and checkout is enabled
                 if job.checkout {
                     if let Some(ref vcs_info) = job.vcs {
-                        let git_ops =
-                            GitOperations::new(vcs_info.credential_id.as_ref().map(|_| {
-                                // TODO: Fetch SSH key path from credential storage
-                                "/tmp/ssh_key".to_string()
-                            }));
+                        let ssh_key_path = if let Some(ref cred_id) = vcs_info.credential_id {
+                            match db.get_credential(cred_id).await {
+                                Ok(Some(cred)) => Some(cred.credential),
+                                Ok(None) => {
+                                    tracing::warn!(credential_id = %cred_id, "VCS credential not found, proceeding without SSH key");
+                                    None
+                                }
+                                Err(e) => {
+                                    tracing::warn!(credential_id = %cred_id, error = %e, "Failed to fetch VCS credential");
+                                    None
+                                }
+                            }
+                        } else {
+                            None
+                        };
+                        let git_ops = GitOperations::new(ssh_key_path);
                         match vcs::checkout(vcs_info, &ctx.work_dir, &ctx.params, &git_ops).await {
                             Ok(_) => {
                                 tracing::info!(job_id = %req.job_id, "VCS checkout completed");
@@ -589,6 +609,22 @@ async fn run_server(config: Config, socket_path: PathBuf) -> anyhow::Result<bool
 
                 // Execute
                 let result = executor_consumer.execute(&ctx, &job).await;
+
+                // Save logs to file
+                let log_dir = format!(
+                    "{}/{}/{}",
+                    config_consumer.paths.run_dir, req.job_id, req.run_id
+                );
+                let log_path = format!("{}/output.log", log_dir);
+                let log_content = match &result {
+                    Ok(r) => r.logs.clone(),
+                    Err(e) => format!("Job execution failed: {}", e),
+                };
+                if let Err(e) = std::fs::create_dir_all(&log_dir) {
+                    tracing::warn!("Failed to create log directory {}: {}", log_dir, e);
+                } else if let Err(e) = std::fs::write(&log_path, &log_content) {
+                    tracing::warn!("Failed to write log file {}: {}", log_path, e);
+                }
 
                 // Release permit (job is done)
                 drop(permit);

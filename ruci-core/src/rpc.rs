@@ -53,15 +53,14 @@ impl RpcServer {
 
     /// Start the RPC server
     pub async fn serve(&self) -> Result<()> {
-        let addr = format!("{}:{}", self.config.server.host, self.config.server.port);
-
         match self.config.server.rpc_mode {
-            RpcMode::Tcp => self.serve_tcp(&addr).await,
-            RpcMode::Unix => {
-                let socket_name = self.socket_path.to_string_lossy();
-                std::fs::remove_file(&*socket_name).ok();
-                // For Unix socket, use tcp for now
+            RpcMode::Tcp => {
+                let addr = format!("{}:{}", self.config.server.host, self.config.server.port);
                 self.serve_tcp(&addr).await
+            }
+            RpcMode::Unix => {
+                let socket_path = &self.socket_path;
+                self.serve_unix(socket_path).await
             }
         }
     }
@@ -69,7 +68,7 @@ impl RpcServer {
     async fn serve_tcp(&self, addr: &str) -> Result<()> {
         let mut listener =
             tarpc::serde_transport::tcp::listen(addr, || Json::<_, _>::default()).await?;
-        listener.config_mut().max_frame_length(usize::MAX);
+        listener.config_mut().max_frame_length(10 * 1024 * 1024); // 10 MB max frame size
 
         tracing::info!("RPC server listening on {}", addr);
 
@@ -79,6 +78,50 @@ impl RpcServer {
             queue: self.queue.clone(),
             executor: self.executor.clone(),
             storage: self.storage.clone(),
+            start_time: std::time::Instant::now(),
+        });
+
+        let incoming = listener.filter_map(|r| future::ready(r.ok()));
+        incoming
+            .map(server::BaseChannel::with_defaults)
+            .map(|channel| {
+                let server = (*server).clone();
+                channel
+                    .execute(server.serve())
+                    .for_each(|response| async move {
+                        tokio::spawn(response);
+                    })
+            })
+            .buffer_unordered(10)
+            .for_each(|_| async {})
+            .await;
+
+        Ok(())
+    }
+
+    async fn serve_unix(&self, socket_path: &std::path::Path) -> Result<()> {
+        // Remove stale socket file if exists
+        let _ = std::fs::remove_file(socket_path);
+
+        let mut listener = tarpc::serde_transport::unix::listen(socket_path, || {
+            Json::<_, _>::default()
+        })
+        .await
+        .map_err(|e| crate::error::Error::Rpc(crate::error::RpcError::Server(format!(
+            "Failed to bind Unix socket {}: {}", socket_path.display(), e
+        ))))?;
+
+        listener.config_mut().max_frame_length(10 * 1024 * 1024); // 10 MB max frame size
+
+        tracing::info!("RPC server listening on unix://{}", socket_path.display());
+
+        let server = Arc::new(RuciRpcImpl {
+            config: self.config.clone(),
+            db: self.db.clone(),
+            queue: self.queue.clone(),
+            executor: self.executor.clone(),
+            storage: self.storage.clone(),
+            start_time: std::time::Instant::now(),
         });
 
         let incoming = listener.filter_map(|r| future::ready(r.ok()));
@@ -121,6 +164,7 @@ struct RuciRpcImpl {
     queue: Arc<JobQueue>,
     executor: Arc<dyn Executor>,
     storage: Arc<dyn Storage>,
+    start_time: std::time::Instant,
 }
 
 impl RuciRpcImpl {
@@ -193,16 +237,23 @@ impl RuciRpc for RuciRpcImpl {
     }
 
     async fn abort_job(self, _: Context, run_id: String) {
-        if let Err(e) = self.db.update_run_status(&run_id, "ABORTED", None).await {
-            tracing::error!("Failed to abort job: {}", e);
+        // First try to abort the executor process
+        let abort_result = self.executor.abort(&run_id).await;
+        if let Err(e) = &abort_result {
+            tracing::error!("Failed to abort executor for run {}: {}", run_id, e);
         }
-        if let Err(e) = self.executor.abort(&run_id).await {
-            tracing::error!("Failed to abort executor: {}", e);
+        // Then update DB status — do this regardless of executor result
+        // so the DB reflects the user's intent to abort
+        if let Err(e) = self.db.update_run_status(&run_id, "ABORTED", None).await {
+            tracing::error!("Failed to update run status to ABORTED: {}", e);
         }
     }
 
     async fn list_jobs(self, _: Context) -> Vec<JobInfo> {
-        self.db.list_jobs().await.unwrap_or_default()
+        self.db.list_jobs().await.map_err(|e| {
+            tracing::warn!("Failed to list jobs: {}", e);
+            e
+        }).unwrap_or_default()
     }
 
     async fn get_job(self, _: Context, job_id: String) -> Option<JobInfo> {
@@ -282,6 +333,10 @@ impl RuciRpc for RuciRpcImpl {
         self.db
             .list_runs_by_status("QUEUED")
             .await
+            .map_err(|e| {
+                tracing::warn!("Failed to list queued runs: {}", e);
+                e
+            })
             .unwrap_or_default()
     }
 
@@ -289,6 +344,10 @@ impl RuciRpc for RuciRpcImpl {
         self.db
             .list_runs_by_status("RUNNING")
             .await
+            .map_err(|e| {
+                tracing::warn!("Failed to list running runs: {}", e);
+                e
+            })
             .unwrap_or_default()
     }
 
@@ -297,7 +356,34 @@ impl RuciRpc for RuciRpcImpl {
     }
 
     async fn get_run_log(self, _: Context, run_id: String) -> String {
-        format!("Log for run {} not yet implemented", run_id)
+        let run = match self.db.get_run(&run_id).await {
+            Ok(Some(r)) => r,
+            Ok(None) => return format!("Run not found: {}", run_id),
+            Err(e) => return format!("Database error: {}", e),
+        };
+
+        // Validate path components to prevent traversal
+        let sanitize = |s: &str| -> bool {
+            !s.is_empty()
+                && !s.contains('/')
+                && !s.contains('\\')
+                && !s.contains("..")
+                && s.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        };
+        if !sanitize(&run.job_id) || !sanitize(&run_id) {
+            return "Invalid run or job ID".to_string();
+        }
+
+        let log_path = format!(
+            "{}/{}/{}/output.log",
+            self.config.paths.run_dir, run.job_id, run_id
+        );
+
+        match tokio::fs::read_to_string(&log_path).await {
+            Ok(content) => content,
+            Err(_) => format!("No logs available for run {}", run_id),
+        }
     }
 
     async fn upload_artifact(self, _: Context, run_id: String, local_path: String) -> ArtifactInfo {
@@ -371,17 +457,38 @@ impl RuciRpc for RuciRpcImpl {
     }
 
     async fn list_artifacts(self, _: Context, run_id: String) -> Vec<ArtifactInfo> {
-        self.db.list_artifacts(&run_id).await.unwrap_or_default()
+        self.db.list_artifacts(&run_id).await.map_err(|e| {
+            tracing::warn!("Failed to list artifacts for run {}: {}", run_id, e);
+            e
+        }).unwrap_or_default()
     }
 
     async fn status(self, _: Context) -> DaemonStatus {
+        let jobs_total = self.db.list_jobs().await.map_err(|e| {
+            tracing::warn!("Failed to count jobs for status: {}", e);
+            e
+        }).unwrap_or_default().len();
+
+        let jobs_running = self.db.list_runs_by_status("RUNNING").await.map_err(|e| {
+            tracing::warn!("Failed to count running runs: {}", e);
+            e
+        }).unwrap_or_default().len();
+
+        // Count total runs across all known statuses
+        let mut runs_total = 0usize;
+        for status in ["SUCCESS", "FAILED", "ABORTED", "RUNNING", "QUEUED"] {
+            if let Ok(runs) = self.db.list_runs_by_status(status).await {
+                runs_total += runs.len();
+            }
+        }
+
         DaemonStatus {
             version: env!("CARGO_PKG_VERSION").to_string(),
-            uptime_seconds: 0,
+            uptime_seconds: self.start_time.elapsed().as_secs(),
             jobs_queued: self.queue.len(),
-            jobs_running: 0,
-            jobs_total: self.db.list_jobs().await.unwrap_or_default().len(),
-            runs_total: 0,
+            jobs_running,
+            jobs_total,
+            runs_total,
         }
     }
 }
