@@ -59,9 +59,9 @@ pub struct ServerConfig {
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
-            host: "127.0.0.0".to_string(),
+            host: "0.0.0.0".to_string(),
             port: 7741,
-            web_host: "127.0.0.0".to_string(),
+            web_host: "0.0.0.0".to_string(),
             web_port: 8080,
             rpc_mode: RpcMode::Tcp,
             unix_socket_name: "rucid".to_string(),
@@ -139,6 +139,7 @@ impl Default for StorageType {
 /// Paths configuration
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PathsConfig {
+    pub db_dir: String,
     pub jobs_dir: String,
     pub run_dir: String,
     pub archive_dir: String,
@@ -148,6 +149,7 @@ pub struct PathsConfig {
 impl Default for PathsConfig {
     fn default() -> Self {
         Self {
+            db_dir: "/var/lib/ruci/db".to_string(),
             jobs_dir: "/var/lib/ruci/jobs".to_string(),
             run_dir: "/var/lib/ruci/run".to_string(),
             archive_dir: "/var/lib/ruci/archive".to_string(),
@@ -308,7 +310,7 @@ impl Config {
         })?;
 
         let mut config: Config =
-            serde_yaml::from_str(&content).map_err(|e| ConfigError::ParseError {
+            yaml_serde::from_str(&content).map_err(|e| ConfigError::ParseError {
                 path: path.display().to_string(),
                 source: e,
             })?;
@@ -360,7 +362,7 @@ impl Config {
     /// Ensure all required directories exist
     pub fn ensure_dirs(&self) -> Result<()> {
         let dirs = [
-            &self.database.url,
+            &self.paths.db_dir,
             &self.paths.jobs_dir,
             &self.paths.run_dir,
             &self.paths.archive_dir,
