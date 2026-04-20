@@ -19,7 +19,7 @@ use crate::queue::{JobQueue, QueueRequest};
 use crate::storage::Storage;
 use ruci_protocol::{
     ArtifactInfo, DaemonStatus, ErrorCode, JobInfo, JobSubmitResponse, QueueResponse, RuciRpc,
-    RunInfo, RunStatus,
+    RunInfo,
 };
 
 /// RPC Server implementation
@@ -393,6 +393,7 @@ mod tests {
     use crate::executor::{ExecutionContext, ExecutionResult, Executor};
     use crate::storage::Storage;
     use async_trait::async_trait;
+    use ruci_protocol::RunStatus;
     use std::collections::HashMap;
     use std::path::PathBuf;
 
