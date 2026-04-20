@@ -1,4 +1,4 @@
-# Ruci CI Makefile
+# Ruci Makefile
 # Simple CI/CD workflow for Ruci project
 
 .PHONY: all build check test lint clean run stop status logs help
@@ -66,7 +66,7 @@ docker-build:
 
 ## Help
 help:
-	@echo "Ruci CI Makefile"
+	@echo "Ruci Makefile"
 	@echo ""
 	@echo "Targets:"
 	@echo "  build         - Release build (output to bin/)"

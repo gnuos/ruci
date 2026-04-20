@@ -1,4 +1,4 @@
-# Ruci CI Configuration Example
+# Ruci Configuration Example
 # Copy to /etc/ruci/ruci.yaml or use -c flag to specify path
 
 # Server configuration

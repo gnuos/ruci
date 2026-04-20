@@ -1,6 +1,6 @@
-# Contributing to Ruci CI
+# Contributing to Ruci CD
 
-感谢您对 Ruci CI 项目的贡献！本文档提供了开发指南和代码规范。
+感谢您对 Ruci CD 项目的贡献！本文档提供了开发指南和代码规范。
 
 ## 目录
 

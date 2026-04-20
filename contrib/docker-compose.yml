@@ -1,4 +1,4 @@
-# Ruci CI Docker Compose configuration
+# Ruci Docker Compose configuration
 # Usage: docker-compose up -d
 
 services:

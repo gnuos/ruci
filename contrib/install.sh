@@ -1,8 +1,8 @@
 #!/bin/bash
-# Ruci CI Installation Script
+# Ruci Installation Script
 set -e
 
-echo "Installing Ruci CI..."
+echo "Installing Ruci CD..."
 
 # Check if running as root
 if [ "$EUID" -ne 0 ]; then

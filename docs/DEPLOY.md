@@ -1,10 +1,10 @@
-# Ruci CI Deployment Guide
+# Ruci Deployment Guide
 
-This guide covers various deployment methods for Ruci CI.
+This guide covers various deployment methods for Ruci.
 
 ## Prerequisites
 
-- Rust 1.70+ (for building from source)
+- Rust 1.90+ (for building from source)
 - Docker & Docker Compose (for containerized deployment)
 - SQLite, PostgreSQL, or MySQL (for database)
 
@@ -224,11 +224,11 @@ sudo -u rucid /usr/local/bin/rucid --config /etc/ruci/ruci.yaml
 
 ```yaml
 server:
-  host: "127.0.0.0"      # RPC bind address
-  port: 7741             # RPC port
-  web_host: "127.0.0.0"  # Web UI bind address
-  web_port: 8080         # Web UI port
-  rpc_mode: "tcp"        # "tcp" or "unix"
+  host: "0.0.0.0"       # RPC bind address
+  port: 7741            # RPC port
+  web_host: "0.0.0.0"   # Web UI bind address
+  web_port: 8080        # Web UI port
+  rpc_mode: "tcp"       # "tcp" or "unix"
 ```
 
 ### Database Configuration

@@ -1,6 +1,6 @@
-# Ruci CI API Documentation
+# Ruci API Documentation
 
-REST API endpoints for the Ruci CI daemon.
+REST API endpoints for the Ruci daemon.
 
 ## Base URL
 

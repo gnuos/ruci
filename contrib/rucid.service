@@ -1,5 +1,5 @@
 [Unit]
-Description=Ruci CI Daemon
+Description=Ruci CD Daemon
 After=network.target
 
 [Service]

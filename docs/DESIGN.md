@@ -1,8 +1,8 @@
-# Ruci CI 设计文档
+# Ruci CD 设计文档
 
 ## 项目概述
 
-Ruci 是一个轻量级的 CI 系统，使用 Rust 编写，支持 Web UI、REST API 和 CLI 客户端。
+Ruci CD 是一个轻量级的持续交付系统，使用 Rust 编写，支持 Web UI、REST API 和 CLI 客户端。
 
 - **CLI 客户端**: `ruci`
 - **Daemon 服务端**: `rucid`
@@ -37,7 +37,7 @@ ruci/
 │   │   │   ├── mod.rs      # Repository trait 定义
 │   │   │   ├── sqlite.rs   # SQLite 实现
 │   │   │   ├── postgres.rs # PostgreSQL 实现
-│   │   │   └── mysql.rs   # MySQL 实现
+│   │   │   └── mysql.rs    # MySQL 实现
 │   │   ├── queue.rs        # Job 队列 (flume)
 │   │   ├── executor.rs     # Bash 执行器
 │   │   ├── storage.rs      # 存储抽象 (local/S3)
@@ -48,24 +48,24 @@ ruci/
 │   │   ├── archive.rs      # 作业归档
 │   │   └── vcs.rs          # VCS/Git 操作
 │
-├── ruci-protocol/           # RPC 协议定义
+├── ruci-protocol/          # RPC 协议定义
 │   ├── Cargo.toml
 │   └── src/lib.rs          # Service trait、类型定义
 │
-├── contrib/                  # 部署文件
+├── contrib/                # 部署文件
 │   ├── examples/           # 作业配置示例
-│   ├── ruci.yaml.example    # 配置示例
-│   ├── rucid.service        # systemd 服务
+│   ├── ruci.yaml.example   # 配置示例
+│   ├── rucid.service       # systemd 服务
 │   ├── docker-compose.yml
 │   ├── docker/
 │   └── install.sh
 │
-├── docs/                    # 文档
-│   ├── API.md               # API 文档
-│   ├── DEPLOY.md            # 部署指南
-│   └── DESIGN.md            # 本文档
+├── docs/                   # 文档
+│   ├── API.md              # API 文档
+│   ├── DEPLOY.md           # 部署指南
+│   └── DESIGN.md           # 本文档
 │
-└── Makefile                 # 构建脚本
+└── Makefile                # 构建脚本
 ```
 
 ---
@@ -376,7 +376,7 @@ pub enum Error {
 
 ## 扩展指南
 
-Ruci CI 设计了多个扩展点（Plugin Abstraction），允许开发者自定义核心功能。
+Ruci 设计了多个扩展点（Plugin Abstraction），允许开发者自定义核心功能。
 
 ### 扩展点概览
 
