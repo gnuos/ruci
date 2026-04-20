@@ -3,8 +3,9 @@
 //! Uses sqlx for async database operations with SQLite backend.
 
 use async_trait::async_trait;
-use sqlx::{FromRow, Pool, Sqlite, SqlitePool};
+use sqlx::{sqlite::SqliteConnectOptions, FromRow, Pool, Sqlite, SqlitePool};
 use std::collections::HashMap;
+use std::str::FromStr;
 
 use crate::error::{DbError, Result};
 use ruci_protocol::{ArtifactInfo, JobInfo, RunInfo, RunStatus};
@@ -24,7 +25,10 @@ pub struct SqliteRepository {
 impl SqliteRepository {
     /// Create a new SQLite repository
     pub async fn new(database_url: &str) -> Result<Self> {
-        let pool = SqlitePool::connect(database_url)
+        let options = SqliteConnectOptions::from_str(database_url)
+            .map_err(|e| DbError::Connection(e.to_string()))?
+            .create_if_missing(true);
+        let pool = SqlitePool::connect_with(options)
             .await
             .map_err(|e| DbError::Connection(e.to_string()))?;
 

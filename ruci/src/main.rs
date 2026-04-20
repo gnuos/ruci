@@ -22,12 +22,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Daemon management
-    Daemon {
-        #[command(subcommand)]
-        action: DaemonAction,
-    },
-
     /// Job management
     Job {
         #[command(subcommand)]
@@ -46,12 +40,6 @@ enum Commands {
         action: RunAction,
     },
 
-    /// Config management
-    Config {
-        #[command(subcommand)]
-        action: ConfigAction,
-    },
-
     /// Show daemon status
     Status,
 
@@ -63,13 +51,6 @@ enum Commands {
 
     /// Generate shell completions
     Completions(CompletionsCmd),
-}
-
-#[derive(Subcommand)]
-enum DaemonAction {
-    Start,
-    Stop,
-    Restart,
 }
 
 #[derive(Subcommand)]
@@ -160,18 +141,6 @@ enum ArtifactAction {
     },
 }
 
-#[derive(Subcommand)]
-enum ConfigAction {
-    /// Show current config
-    Show,
-
-    /// Validate config file
-    Validate {
-        #[arg(short, long, help = "Config file path")]
-        file: Option<String>,
-    },
-}
-
 #[derive(Args)]
 struct CompletionsCmd {
     #[arg(value_enum, default_value = "bash")]
@@ -192,29 +161,15 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Daemon { action } => handle_daemon(action),
         Commands::Job { action } => handle_job(cli.server, action).await?,
         Commands::Submit { action } => handle_submit(cli.server, action).await?,
         Commands::Run { action } => handle_run(cli.server, action).await?,
-        Commands::Config { action } => handle_config(action),
         Commands::Status => handle_status(cli.server).await?,
         Commands::Validate { file } => handle_validate(file),
         Commands::Completions(cmd) => handle_completions(cmd),
     }
 
     Ok(())
-}
-
-// ─────────────────────────────────────────────────────────────────
-// Daemon handlers
-// ─────────────────────────────────────────────────────────────────
-
-fn handle_daemon(action: DaemonAction) {
-    match action {
-        DaemonAction::Start => println!("Starting rucid daemon..."),
-        DaemonAction::Stop => println!("Stopping rucid daemon..."),
-        DaemonAction::Restart => println!("Restarting rucid daemon..."),
-    }
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -414,24 +369,6 @@ async fn handle_run(server: Option<String>, action: RunAction) -> anyhow::Result
     }
 
     Ok(())
-}
-
-// ─────────────────────────────────────────────────────────────────
-// Config handlers
-// ─────────────────────────────────────────────────────────────────
-
-fn handle_config(action: ConfigAction) {
-    match action {
-        ConfigAction::Show => {
-            println!("Config (showing defaults):");
-            println!("  server.host: 127.0.0.0");
-            println!("  server.port: 7741");
-            println!("  server.web_port: 8080");
-        }
-        ConfigAction::Validate { .. } => {
-            println!("Config validation not available in CLI-only build");
-        }
-    }
 }
 
 // ─────────────────────────────────────────────────────────────────

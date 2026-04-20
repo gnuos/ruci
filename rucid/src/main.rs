@@ -4,11 +4,12 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::process::exit;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use axum::{extract::State, http::StatusCode, response::Json, routing::get, routing::post, Router};
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use prometheus_client::encoding::text::encode;
 use tokio::signal::unix::SignalKind;
 use tokio::sync::{Mutex, Semaphore};
@@ -103,21 +104,17 @@ struct Cli {
     #[arg(short, long, help = "Config file path")]
     config: Option<String>,
 
+    #[arg(long, default_value = "false", help = "Print configuration")]
+    print_config: bool,
+
+    #[arg(long, help = "Check configuration")]
+    validate: Option<String>,
+
     #[arg(long, help = "PID file path (for systemd)")]
     pid_file: Option<PathBuf>,
 
     #[arg(long, help = "RPC socket path")]
     socket_path: Option<PathBuf>,
-
-    #[command(subcommand)]
-    command: Option<Commands>,
-}
-
-#[derive(Subcommand)]
-enum Commands {
-    Start,
-    Stop,
-    Restart,
 }
 
 async fn status_handler(State(_state): State<web::handlers::AppState>) -> Json<serde_json::Value> {
@@ -204,11 +201,20 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     // Load configuration
-    let config = if let Some(path) = cli.config {
-        Config::load(&path)?
+    let config = if let Some(ref cfg_path) = cli.config {
+        Config::load(&cfg_path)?
     } else {
         Config::load_auto()?
     };
+
+    if cli.print_config {
+        show_config(config);
+        exit(0);
+    }
+
+    if let Some(_) = cli.validate {
+        validate_config(cli.validate);
+    }
 
     // Initialize logging
     init_logging(&config.logging);
@@ -221,18 +227,6 @@ async fn main() -> anyhow::Result<()> {
             std::fs::create_dir_all(parent)?;
         }
         std::fs::write(pid_file, std::process::id().to_string())?;
-    }
-
-    // Handle commands
-    match cli.command {
-        Some(Commands::Stop) => {
-            tracing::info!("Stop command received");
-            return Ok(());
-        }
-        Some(Commands::Restart) => {
-            tracing::info!("Restart command received");
-        }
-        _ => {}
     }
 
     // Determine socket path: CLI arg > config
@@ -767,4 +761,234 @@ fn init_logging(config: &ruci_core::config::LoggingConfig) {
             }
         }
     }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Config handlers
+// ─────────────────────────────────────────────────────────────────
+
+fn show_config(config: Config) {
+    println!("Ruci Configuration:");
+    println!("────────────────────────────────────────────────────────────────");
+
+    // Server configuration
+    println!("Server:");
+    println!("  RPC Host: {}", config.server.host);
+    println!("  RPC Port: {}", config.server.port);
+    println!("  Web Host: {}", config.server.web_host);
+    println!("  Web Port: {}", config.server.web_port);
+    println!("  RPC Mode: {:?}", config.server.rpc_mode);
+    println!();
+
+    // Database configuration
+    println!("Database:");
+    println!("  URL: {}", config.database.url);
+    println!();
+
+    // Storage configuration
+    println!("Storage:");
+    println!("  Type: {:?}", config.storage.storage_type);
+    println!("  Region: {}", config.storage.region);
+    if let Some(endpoint) = &config.storage.endpoint {
+        println!("  Endpoint: {}", endpoint);
+    }
+    if let Some(bucket) = &config.storage.bucket {
+        println!("  Bucket: {}", bucket);
+    }
+    println!();
+
+    // Paths configuration
+    println!("Paths:");
+    println!("  Jobs Dir: {}", config.paths.jobs_dir);
+    println!("  Run Dir: {}", config.paths.run_dir);
+    println!("  Archive Dir: {}", config.paths.archive_dir);
+    println!("  Log Dir: {}", config.paths.log_dir);
+    println!();
+
+    // Contexts
+    println!("Contexts ({} configured):", config.contexts.len());
+    for (name, ctx) in &config.contexts {
+        println!("  {}:", name);
+        println!("    Max Parallel: {}", ctx.max_parallel);
+        println!("    Timeout: {}s", ctx.timeout);
+        println!("    Work Dir: {}", ctx.work_dir);
+    }
+    println!();
+
+    // Triggers
+    println!("Triggers ({} configured):", config.triggers.len());
+    for trigger in &config.triggers {
+        println!("  {} (enabled: {}):", trigger.name, trigger.enabled);
+        println!("    Cron: {}", trigger.cron);
+        println!("    Job: {}", trigger.job);
+    }
+    println!();
+
+    // Logging configuration
+    println!("Logging:");
+    println!("  Level: {}", config.logging.level);
+    println!("  Format: {}", config.logging.format);
+    if let Some(ref file_config) = config.logging.file {
+        println!("  File Logging:");
+        println!("    Directory: {}", file_config.dir);
+        println!(
+            "    Max Size: {} MB",
+            file_config.max_size_mb.unwrap_or(100)
+        );
+        println!("    Max Files: {}", file_config.max_files.unwrap_or(7));
+    } else {
+        println!("  File Logging: disabled (console only)");
+    }
+    println!();
+
+    // Archive configuration
+    println!("Archive:");
+    println!("  Enabled: {}", config.archive.enabled);
+    println!("  Max Age Days: {}", config.archive.max_age_days);
+    println!();
+
+    // Cleanup configuration
+    println!("Cleanup:");
+    println!("  Enabled: {}", config.cleanup.enabled);
+    println!("  Interval Hours: {}", config.cleanup.interval_hours);
+    println!();
+
+    // Web configuration
+    println!("Web:");
+    println!("  Enabled: {}", config.web.enabled);
+    println!("  Admin Username: {}", config.web.admin_username);
+    println!("  Admin Password: ******** (set)");
+    println!();
+
+    println!("────────────────────────────────────────────────────────────────");
+    println!("Standard config file locations (in priority order):");
+    for path in ruci_core::config::Config::standard_paths() {
+        let exists = if path.exists() { "✓" } else { " " };
+        println!("  [{}] {}", exists, path.display());
+    }
+}
+
+fn validate_config(file: Option<String>) {
+    println!("Validating Ruci configuration...");
+    println!();
+
+    let (_config_path, config) = if let Some(path) = file {
+        let path = PathBuf::from(path);
+        println!("Checking file: {}", path.display());
+        match Config::load(&path) {
+            Ok(cfg) => (Some(path), cfg),
+            Err(e) => {
+                eprintln!("✗ Configuration failed to load:");
+                eprintln!("  {}", e);
+                exit(1);
+            }
+        }
+    } else {
+        // Try to auto-load
+        println!("Auto-detecting configuration file...");
+        match Config::load_auto() {
+            Ok(cfg) => {
+                let path = cfg
+                    .config_path
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "default (no file)".to_string());
+                println!("Found: {}", path);
+                (cfg.config_path.clone(), cfg)
+            }
+            Err(e) => {
+                eprintln!("✗ No valid configuration found:");
+                eprintln!("  {}", e);
+                println!();
+                println!("Standard locations checked:");
+                for path in Config::standard_paths() {
+                    println!("  - {}", path.display());
+                }
+                exit(1);
+            }
+        }
+    };
+
+    println!();
+    println!("Configuration loaded successfully!");
+
+    // Validate the configuration
+    if let Err(e) = config.validate() {
+        eprintln!("✗ Configuration validation failed:");
+        eprintln!("  {}", e);
+        exit(1);
+    }
+
+    println!("✓ Configuration is valid");
+    println!();
+
+    // Additional checks
+    println!("Additional checks:");
+
+    // Check directories exist or can be created
+    let dirs = [
+        ("Jobs directory", &config.paths.jobs_dir),
+        ("Run directory", &config.paths.run_dir),
+        ("Archive directory", &config.paths.archive_dir),
+        ("Log directory", &config.paths.log_dir),
+    ];
+
+    let mut all_good = true;
+    for (name, dir) in &dirs {
+        let path = std::path::Path::new(dir);
+        if path.exists() {
+            if path.is_dir() {
+                println!("  ✓ {}: exists", name);
+            } else {
+                println!("  ✗ {}: exists but is not a directory", name);
+                all_good = false;
+            }
+        } else {
+            println!("  ⚠ {}: does not exist (will be created)", name);
+        }
+    }
+
+    // Check database
+    if config.database.url.starts_with("sqlite://") {
+        let db_path = config
+            .database
+            .url
+            .strip_prefix("sqlite://")
+            .unwrap_or("")
+            .trim_start_matches('/');
+
+        if db_path.is_empty() || db_path == ":memory:" {
+            println!("  ⚠ Database: using in-memory SQLite");
+        } else {
+            let db_path = std::path::Path::new(db_path);
+            if let Some(parent) = db_path.parent() {
+                if parent.exists() {
+                    println!("  ✓ Database parent directory exists");
+                } else {
+                    println!("  ⚠ Database parent directory does not exist (will be created)");
+                }
+            }
+        }
+    }
+
+    // Check contexts
+    if config.contexts.is_empty() {
+        println!("  ⚠ No contexts configured (will use defaults)");
+    } else {
+        println!("  ✓ {} context(s) configured", config.contexts.len());
+    }
+
+    // Check web config security
+    if config.web.enabled && config.web.admin_password == "admin" {
+        println!("  ⚠ Web enabled but using default password (should be changed)");
+    }
+
+    println!();
+    if all_good {
+        println!("✓ All checks passed");
+    } else {
+        println!("⚠ Some warnings detected, but configuration is valid");
+    }
+
+    exit(0);
 }
