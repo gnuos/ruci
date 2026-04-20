@@ -21,20 +21,6 @@
 - Cargo
 - Git
 
-### 克隆与构建
-
-```bash
-# 克隆仓库
-git clone https://github.com/gnuos/ruci.git
-cd ruci
-
-# 构建项目
-make build
-
-# 运行开发版本
-make dev
-```
-
 ### 常用命令
 
 ```bash
@@ -88,7 +74,7 @@ make clean          # 清理构建产物
 // ✅ 推荐：使用 ? 操作符
 fn load_config() -> Result<Config, ConfigError> {
     let content = std::fs::read_to_string(&path)?;
-    let config = serde_yaml::from_str(&content)?;
+    let config = yaml_serde::from_str(&content)?;
     Ok(config)
 }
 

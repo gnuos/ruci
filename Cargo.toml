@@ -33,8 +33,8 @@ aws-sdk-s3 = "1"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
-serde_yaml = "0.9"
 serde_json = "1.0"
+yaml_serde = "0.10"
 
 # CLI
 clap = { version = "4.5", features = ["derive"] }
@@ -70,8 +70,22 @@ parking_lot = "0.12"
 
 # Metrics
 prometheus-client = "0.22"
+aws-config = "1.8.15"
+bcrypt = "0.15"
+daemonize = "0.5"
+hex = "0.4"
+nix = "0.28"
+ruci-core = { path = "ruci-core" }
+ruci-protocol = { path = "ruci-protocol" }
+sqlx = "0.8.6"
+tar = "0.4.45"
+tempfile = "3.27.0"
+tokio-serde = "0.9.0"
+tokio-tar = "0.3.1"
+urlencoding = "2.1"
 
 [profile.release]
 lto = true
 codegen-units = 1
 opt-level = 3
+strip = true

@@ -78,7 +78,7 @@ impl Job {
         }
 
         let raw: RawJob =
-            serde_yaml::from_str(yaml).map_err(|e| ExecutorError::InvalidStep(e.to_string()))?;
+            yaml_serde::from_str(yaml).map_err(|e| ExecutorError::InvalidStep(e.to_string()))?;
 
         Ok(Self {
             name: raw.name,

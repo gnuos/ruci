@@ -14,8 +14,8 @@ path = "src/main.rs"
 
 [dependencies]
 # Internal
-ruci-protocol = { path = "../ruci-protocol" }
-ruci-core = { path = "../ruci-core" }
+ruci-protocol = { workspace = true }
+ruci-core = { workspace = true }
 
 # Async
 tokio = { workspace = true }
@@ -37,3 +37,7 @@ thiserror = { workspace = true }
 bytes = { workspace = true }
 flume.workspace = true
 tarpc = { workspace = true, features = ["serde-transport", "tcp"] }
+
+# Daemon management
+daemonize = { workspace = true }
+nix = { workspace = true, features = ["signal"] }

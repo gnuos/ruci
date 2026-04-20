@@ -15,6 +15,7 @@ use crate::error::{Error, Result};
 pub enum VcsType {
     Github,
     Gitlab,
+    Gitea,
     Gogs,
     /// Custom Git server (self-hosted GitLab, Gitea, etc.)
     Custom,
@@ -25,6 +26,7 @@ impl std::fmt::Display for VcsType {
         match self {
             VcsType::Github => write!(f, "github"),
             VcsType::Gitlab => write!(f, "gitlab"),
+            VcsType::Gitea => write!(f, "gitea"),
             VcsType::Gogs => write!(f, "gogs"),
             VcsType::Custom => write!(f, "custom"),
         }
@@ -365,7 +367,7 @@ mod tests {
 url: https://github.com/owner/repo.git
 repository: owner/repo
 "#;
-        let info: VcsInfo = serde_yaml::from_str(yaml).unwrap();
+        let info: VcsInfo = yaml_serde::from_str(yaml).unwrap();
         assert_eq!(info.branch, "main");
         assert!(!info.submodules);
         assert!(info.commit.is_none());

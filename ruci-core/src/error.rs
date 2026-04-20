@@ -70,7 +70,7 @@ pub enum Error {
     Io(#[from] std::io::Error),
 
     #[error("Parse error: {0}")]
-    Parse(#[from] serde_yaml::Error),
+    Parse(#[from] yaml_serde::Error),
 
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
@@ -91,7 +91,7 @@ pub enum ConfigError {
     #[error("Failed to parse config file '{path}': {source}")]
     ParseError {
         path: String,
-        source: serde_yaml::Error,
+        source: yaml_serde::Error,
     },
 
     #[error("Config file not found: {paths:?}")]
@@ -237,7 +237,7 @@ mod tests {
 
     #[test]
     fn test_config_error_parse_display() {
-        let yaml_err = serde_yaml::from_str::<crate::Config>("invalid: [").unwrap_err();
+        let yaml_err = yaml_serde::from_str::<crate::Config>("invalid: [").unwrap_err();
         let err = ConfigError::ParseError {
             path: "test.yaml".to_string(),
             source: yaml_err,
@@ -478,7 +478,7 @@ mod tests {
 
     #[test]
     fn test_error_from_parse_error() {
-        let yaml_err = serde_yaml::from_str::<crate::Config>("invalid: [").unwrap_err();
+        let yaml_err = yaml_serde::from_str::<crate::Config>("invalid: [").unwrap_err();
         let err: crate::Error = yaml_err.into();
         match err {
             crate::Error::Parse(_) => {}
@@ -639,7 +639,7 @@ mod tests {
 
     #[test]
     fn test_error_chain_parse_error_with_context() {
-        let yaml_err = serde_yaml::from_str::<crate::Config>("invalid: [").unwrap_err();
+        let yaml_err = yaml_serde::from_str::<crate::Config>("invalid: [").unwrap_err();
         let err: crate::Error = yaml_err.into();
 
         // Error should be Parse variant
