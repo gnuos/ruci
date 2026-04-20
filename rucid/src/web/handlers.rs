@@ -77,13 +77,13 @@ fn base_html(title: &str, content: &str) -> String {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{} - Ruci CI</title>
+    <title>{} - Ruci CD</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-900 text-gray-100 min-h-screen">
     <nav class="bg-gray-800 border-b border-gray-700 px-6 py-4">
         <div class="container mx-auto flex justify-between items-center">
-            <a href="/" class="text-xl font-bold text-blue-400">Ruci CI</a>
+            <a href="/" class="text-xl font-bold text-blue-400">Ruci CD</a>
             <div class="flex items-center gap-4">
                 <a href="/" class="hover:text-blue-400">Dashboard</a>
                 <a href="/ui/jobs" class="hover:text-blue-400">Jobs</a>
@@ -128,7 +128,7 @@ pub async fn login_page() -> Html<String> {
     let content = r#"
     <div class="max-w-md mx-auto mt-20">
         <div class="bg-gray-800 rounded-lg p-8 border border-gray-700">
-            <h1 class="text-2xl font-bold mb-6 text-center">Sign In to Ruci CI</h1>
+            <h1 class="text-2xl font-bold mb-6 text-center">Sign In to Ruci CD</h1>
             <form action="/ui/login" method="post" class="space-y-4">
                 <div>
                     <label class="block text-sm font-medium mb-2">Username</label>
@@ -184,7 +184,7 @@ pub async fn login_handler(State(state): State<AppState>, Form(form): Form<Login
             Html(base_html("Login", r#"
                 <div class="max-w-md mx-auto mt-20">
                     <div class="bg-gray-800 rounded-lg p-8 border border-gray-700">
-                        <h1 class="text-2xl font-bold mb-6 text-center">Sign In to Ruci CI</h1>
+                        <h1 class="text-2xl font-bold mb-6 text-center">Sign In to Ruci CD</h1>
                         <div class="bg-red-900 border border-red-700 text-red-300 px-4 py-3 rounded mb-4">
                             Invalid username or password
                         </div>
@@ -268,11 +268,7 @@ pub async fn dashboard_page(State(state): State<AppState>, cookies: HeaderMap) -
             .list_runs_by_status("ABORTED")
             .await
             .unwrap_or_default();
-        success
-            .into_iter()
-            .chain(failed)
-            .chain(aborted)
-            .collect()
+        success.into_iter().chain(failed).chain(aborted).collect()
     };
     recent_runs.sort_by(|a, b| b.build_num.cmp(&a.build_num));
     recent_runs.truncate(10);
@@ -837,7 +833,8 @@ fn sanitize_path_component(s: &str) -> bool {
         && !s.contains('/')
         && !s.contains('\\')
         && !s.contains("..")
-        && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 /// SSE log streaming handler
@@ -846,8 +843,7 @@ pub async fn log_stream_handler(
     axum::extract::Path(run_id): axum::extract::Path<String>,
 ) -> Response {
     if !sanitize_path_component(&run_id) {
-        let body =
-            Body::from("data: {\"type\":\"error\",\"message\":\"Invalid run ID\"}\n\n");
+        let body = Body::from("data: {\"type\":\"error\",\"message\":\"Invalid run ID\"}\n\n");
         return axum::http::Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "text/event-stream")
@@ -862,8 +858,7 @@ pub async fn log_stream_handler(
             state.context.config.paths.run_dir, run.job_id, run_id
         ),
         Ok(None) => {
-            let body =
-                Body::from("data: {\"type\":\"error\",\"message\":\"Run not found\"}\n\n");
+            let body = Body::from("data: {\"type\":\"error\",\"message\":\"Run not found\"}\n\n");
             return axum::http::Response::builder()
                 .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, "text/event-stream")

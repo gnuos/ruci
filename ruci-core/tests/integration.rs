@@ -401,7 +401,11 @@ async fn test_webhook_trigger_crud() {
 
     db.upsert_webhook_trigger(&webhook).await.unwrap();
 
-    let retrieved = db.get_webhook_trigger("github-push").await.unwrap().unwrap();
+    let retrieved = db
+        .get_webhook_trigger("github-push")
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(retrieved.source, WebhookSource::Github);
     assert_eq!(retrieved.filter.branches.len(), 2);
     assert!(retrieved.enabled);
@@ -410,7 +414,11 @@ async fn test_webhook_trigger_crud() {
     db.set_webhook_trigger_enabled("github-push", false)
         .await
         .unwrap();
-    let retrieved = db.get_webhook_trigger("github-push").await.unwrap().unwrap();
+    let retrieved = db
+        .get_webhook_trigger("github-push")
+        .await
+        .unwrap()
+        .unwrap();
     assert!(!retrieved.enabled);
 
     // Delete

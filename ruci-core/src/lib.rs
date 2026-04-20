@@ -1,6 +1,6 @@
 //! Ruci Core Library
 //!
-//! Core components for the Ruci CI system
+//! Core components for the Ruci CD system
 
 pub mod archive;
 pub mod auth;

@@ -103,13 +103,16 @@ impl RpcServer {
         // Remove stale socket file if exists
         let _ = std::fs::remove_file(socket_path);
 
-        let mut listener = tarpc::serde_transport::unix::listen(socket_path, || {
-            Json::<_, _>::default()
-        })
-        .await
-        .map_err(|e| crate::error::Error::Rpc(crate::error::RpcError::Server(format!(
-            "Failed to bind Unix socket {}: {}", socket_path.display(), e
-        ))))?;
+        let mut listener =
+            tarpc::serde_transport::unix::listen(socket_path, || Json::<_, _>::default())
+                .await
+                .map_err(|e| {
+                    crate::error::Error::Rpc(crate::error::RpcError::Server(format!(
+                        "Failed to bind Unix socket {}: {}",
+                        socket_path.display(),
+                        e
+                    )))
+                })?;
 
         listener.config_mut().max_frame_length(10 * 1024 * 1024); // 10 MB max frame size
 
@@ -250,10 +253,14 @@ impl RuciRpc for RuciRpcImpl {
     }
 
     async fn list_jobs(self, _: Context) -> Vec<JobInfo> {
-        self.db.list_jobs().await.map_err(|e| {
-            tracing::warn!("Failed to list jobs: {}", e);
-            e
-        }).unwrap_or_default()
+        self.db
+            .list_jobs()
+            .await
+            .map_err(|e| {
+                tracing::warn!("Failed to list jobs: {}", e);
+                e
+            })
+            .unwrap_or_default()
     }
 
     async fn get_job(self, _: Context, job_id: String) -> Option<JobInfo> {
@@ -457,22 +464,38 @@ impl RuciRpc for RuciRpcImpl {
     }
 
     async fn list_artifacts(self, _: Context, run_id: String) -> Vec<ArtifactInfo> {
-        self.db.list_artifacts(&run_id).await.map_err(|e| {
-            tracing::warn!("Failed to list artifacts for run {}: {}", run_id, e);
-            e
-        }).unwrap_or_default()
+        self.db
+            .list_artifacts(&run_id)
+            .await
+            .map_err(|e| {
+                tracing::warn!("Failed to list artifacts for run {}: {}", run_id, e);
+                e
+            })
+            .unwrap_or_default()
     }
 
     async fn status(self, _: Context) -> DaemonStatus {
-        let jobs_total = self.db.list_jobs().await.map_err(|e| {
-            tracing::warn!("Failed to count jobs for status: {}", e);
-            e
-        }).unwrap_or_default().len();
+        let jobs_total = self
+            .db
+            .list_jobs()
+            .await
+            .map_err(|e| {
+                tracing::warn!("Failed to count jobs for status: {}", e);
+                e
+            })
+            .unwrap_or_default()
+            .len();
 
-        let jobs_running = self.db.list_runs_by_status("RUNNING").await.map_err(|e| {
-            tracing::warn!("Failed to count running runs: {}", e);
-            e
-        }).unwrap_or_default().len();
+        let jobs_running = self
+            .db
+            .list_runs_by_status("RUNNING")
+            .await
+            .map_err(|e| {
+                tracing::warn!("Failed to count running runs: {}", e);
+                e
+            })
+            .unwrap_or_default()
+            .len();
 
         // Count total runs across all known statuses
         let mut runs_total = 0usize;

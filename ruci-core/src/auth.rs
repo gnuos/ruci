@@ -98,7 +98,9 @@ impl AuthService {
         if !Self::verify_password(password, &user.password_hash)? {
             // Track failed attempt
             let mut attempts = self.failed_attempts.write();
-            let entry = attempts.entry(username.to_string()).or_insert((0, Instant::now()));
+            let entry = attempts
+                .entry(username.to_string())
+                .or_insert((0, Instant::now()));
             entry.0 += 1;
             return Ok(None);
         }

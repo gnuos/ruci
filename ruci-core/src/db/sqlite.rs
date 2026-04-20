@@ -11,10 +11,9 @@ use crate::error::{DbError, Result};
 use ruci_protocol::{ArtifactInfo, JobInfo, RunInfo, RunStatus};
 
 use super::repository::{
-    ArtifactRepository, JobRepository, Repository, RunRepository, SessionInfo,
-    SessionRepository, TriggerInfo, TriggerRepository, UserInfo, UserRepository,
-    VcsCredentialInfo, VcsCredentialRepository, WebhookFilter, WebhookRepository, WebhookSource,
-    WebhookTriggerInfo,
+    ArtifactRepository, JobRepository, Repository, RunRepository, SessionInfo, SessionRepository,
+    TriggerInfo, TriggerRepository, UserInfo, UserRepository, VcsCredentialInfo,
+    VcsCredentialRepository, WebhookFilter, WebhookRepository, WebhookSource, WebhookTriggerInfo,
 };
 
 /// SQLite repository implementation
@@ -843,10 +842,11 @@ struct JobRow {
 
 impl From<JobRow> for JobInfo {
     fn from(row: JobRow) -> Self {
-        let submitted_at = chrono::NaiveDateTime::parse_from_str(&row.created_at, "%Y-%m-%d %H:%M:%S")
-            .ok()
-            .map(|ndt| ndt.and_utc())
-            .unwrap_or_else(|| chrono::DateTime::from_timestamp(0, 0).unwrap());
+        let submitted_at =
+            chrono::NaiveDateTime::parse_from_str(&row.created_at, "%Y-%m-%d %H:%M:%S")
+                .ok()
+                .map(|ndt| ndt.and_utc())
+                .unwrap_or_else(|| chrono::DateTime::from_timestamp(0, 0).unwrap());
         JobInfo {
             id: row.id,
             name: row.name.clone(),

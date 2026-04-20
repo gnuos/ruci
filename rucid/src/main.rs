@@ -1,4 +1,4 @@
-//! Rucid - Ruci CI Daemon
+//! Rucid - Ruci CD Daemon
 //!
 //! Main entry point for the CI daemon
 
@@ -98,7 +98,7 @@ impl GracefulShutdown {
 
 #[derive(Parser)]
 #[command(name = "rucid")]
-#[command(about = "Ruci CI Daemon")]
+#[command(about = "Ruci Daemon")]
 struct Cli {
     #[arg(short, long, help = "Config file path")]
     config: Option<String>,
@@ -352,16 +352,30 @@ async fn run_server(config: Config, socket_path: PathBuf) -> anyhow::Result<bool
 
             let cors = CorsLayer::new()
                 .allow_origin([
-                    format!("http://{}:{}", context_web.config.server.web_host, context_web.config.server.web_port)
+                    format!(
+                        "http://{}:{}",
+                        context_web.config.server.web_host, context_web.config.server.web_port
+                    )
+                    .parse::<axum::http::HeaderValue>()
+                    .unwrap_or_else(|_| "http://localhost:8080".parse().unwrap()),
+                    format!(
+                        "https://{}:{}",
+                        context_web.config.server.web_host, context_web.config.server.web_port
+                    )
+                    .parse::<axum::http::HeaderValue>()
+                    .unwrap_or_else(|_| "https://localhost:8080".parse().unwrap()),
+                    "http://localhost:8080"
                         .parse::<axum::http::HeaderValue>()
-                        .unwrap_or_else(|_| "http://localhost:8080".parse().unwrap()),
-                    format!("https://{}:{}", context_web.config.server.web_host, context_web.config.server.web_port)
+                        .unwrap(),
+                    "http://127.0.0.1:8080"
                         .parse::<axum::http::HeaderValue>()
-                        .unwrap_or_else(|_| "https://localhost:8080".parse().unwrap()),
-                    "http://localhost:8080".parse::<axum::http::HeaderValue>().unwrap(),
-                    "http://127.0.0.1:8080".parse::<axum::http::HeaderValue>().unwrap(),
+                        .unwrap(),
                 ])
-                .allow_methods([axum::http::Method::GET, axum::http::Method::POST, axum::http::Method::DELETE])
+                .allow_methods([
+                    axum::http::Method::GET,
+                    axum::http::Method::POST,
+                    axum::http::Method::DELETE,
+                ])
                 .allow_headers(Any);
 
             let app_state = handlers::AppState {

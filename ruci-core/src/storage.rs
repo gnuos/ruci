@@ -56,7 +56,8 @@ fn validate_key(key: &str) -> Result<()> {
         return Err(StorageError::Local(format!(
             "Storage key must not start with separator: {}",
             key
-        )).into());
+        ))
+        .into());
     }
     // Normalize and check for path traversal
     let path = Path::new(key);
@@ -69,16 +70,16 @@ fn validate_key(key: &str) -> Result<()> {
                     return Err(StorageError::Local(format!(
                         "Path traversal detected in key: {}",
                         key
-                    )).into());
+                    ))
+                    .into());
                 }
                 depth = depth.saturating_sub(1);
             }
             std::path::Component::CurDir => {}
             _ => {
-                return Err(StorageError::Local(format!(
-                    "Invalid path component in key: {}",
-                    key
-                )).into());
+                return Err(
+                    StorageError::Local(format!("Invalid path component in key: {}", key)).into(),
+                );
             }
         }
     }
@@ -107,9 +108,7 @@ impl LocalStorage {
             .base_path
             .canonicalize()
             .unwrap_or_else(|_| self.base_path.clone());
-        let canonical_resolved = resolved
-            .canonicalize()
-            .unwrap_or_else(|_| resolved.clone());
+        let canonical_resolved = resolved.canonicalize().unwrap_or_else(|_| resolved.clone());
         if !canonical_resolved.starts_with(&canonical_base) {
             return Err(StorageError::Local(format!(
                 "Resolved path escapes storage base: {}",

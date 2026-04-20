@@ -1,6 +1,6 @@
 //! Ruci CLI - Command Line Interface
 //!
-//! Client for the Ruci CI system
+//! Client for the Ruci CD system
 
 use std::collections::HashMap;
 use std::io::Write;
@@ -11,7 +11,7 @@ use ruci_protocol::RunStatus;
 
 #[derive(Parser)]
 #[command(name = "ruci")]
-#[command(about = "Ruci CI Client", long_about = None)]
+#[command(about = "Ruci Client", long_about = None)]
 struct Cli {
     #[arg(short, long, help = "RPC server address")]
     server: Option<String>,

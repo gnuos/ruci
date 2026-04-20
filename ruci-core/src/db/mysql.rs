@@ -10,10 +10,9 @@ use crate::error::{DbError, Result};
 use ruci_protocol::{ArtifactInfo, JobInfo, RunInfo, RunStatus};
 
 use super::repository::{
-    ArtifactRepository, JobRepository, Repository, RunRepository, SessionInfo,
-    SessionRepository, TriggerInfo, TriggerRepository, UserInfo, UserRepository,
-    VcsCredentialInfo, VcsCredentialRepository, WebhookFilter, WebhookRepository, WebhookSource,
-    WebhookTriggerInfo,
+    ArtifactRepository, JobRepository, Repository, RunRepository, SessionInfo, SessionRepository,
+    TriggerInfo, TriggerRepository, UserInfo, UserRepository, VcsCredentialInfo,
+    VcsCredentialRepository, WebhookFilter, WebhookRepository, WebhookSource, WebhookTriggerInfo,
 };
 
 /// MySQL repository implementation

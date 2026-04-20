@@ -196,8 +196,6 @@ pub enum RpcError {
     Timeout,
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -347,8 +345,6 @@ mod tests {
         let err = RpcError::Timeout;
         assert_eq!(err.to_string(), "Timeout");
     }
-
-
 
     #[test]
     fn test_main_error_display() {
