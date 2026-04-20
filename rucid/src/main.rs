@@ -201,7 +201,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Load configuration
     let mut config = if let Some(ref cfg_path) = cli.config {
-        Config::load(&cfg_path)?
+        Config::load(cfg_path)?
     } else {
         Config::load_auto()?
     };
@@ -211,7 +211,7 @@ async fn main() -> anyhow::Result<()> {
         exit(0);
     }
 
-    if let Some(_) = cli.validate {
+    if cli.validate.is_some() {
         validate_config(cli.validate);
     }
 

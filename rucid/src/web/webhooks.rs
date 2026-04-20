@@ -281,7 +281,7 @@ fn trigger_matches_event(trigger: &WebhookTriggerInfo, event: &ParsedWebhookEven
 
     // Check repository pattern
     if let Some(ref repo_pattern) = filter.repository {
-        if !match_pattern(&event.repository, &repo_pattern) {
+        if !match_pattern(&event.repository, repo_pattern) {
             return false;
         }
     }

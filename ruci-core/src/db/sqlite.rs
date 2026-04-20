@@ -1335,9 +1335,9 @@ mod tests {
 
         // Depending on FK enforcement, this might succeed or fail
         // The key is it shouldn't panic
-        if result.is_err() {
+        if let Err(e) = result {
             // If it fails due to FK constraint, that's expected behavior
-            let err_msg = result.unwrap_err().to_string();
+            let err_msg = e.to_string();
             assert!(err_msg.contains("foreign key") || err_msg.contains("constraint"));
         }
     }

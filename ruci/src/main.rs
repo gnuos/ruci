@@ -148,6 +148,7 @@ struct CompletionsCmd {
 }
 
 #[derive(ValueEnum, Clone)]
+#[allow(clippy::enum_variant_names)]
 enum Shell {
     Bash,
     Zsh,

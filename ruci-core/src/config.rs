@@ -70,17 +70,12 @@ impl Default for ServerConfig {
 }
 
 /// RPC server mode
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum RpcMode {
+    #[default]
     Tcp,
     Unix,
-}
-
-impl Default for RpcMode {
-    fn default() -> Self {
-        Self::Tcp
-    }
 }
 
 /// Database configuration
@@ -126,17 +121,12 @@ impl Default for StorageConfig {
 }
 
 /// Storage backend type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum StorageType {
+    #[default]
     Local,
     Rustfs,
-}
-
-impl Default for StorageType {
-    fn default() -> Self {
-        Self::Local
-    }
 }
 
 /// Paths configuration

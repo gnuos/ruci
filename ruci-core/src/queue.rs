@@ -255,8 +255,8 @@ mod tests {
         assert_eq!(queue.len(), 2);
 
         // Dequeue both
-        let d1 = queue.dequeue().await.unwrap();
-        let d2 = queue.dequeue().await.unwrap();
+        let _d1 = queue.dequeue().await.unwrap();
+        let _d2 = queue.dequeue().await.unwrap();
 
         // Order may vary due to async, but both should be received
         assert_eq!(queue.len(), 0);

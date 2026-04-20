@@ -773,7 +773,7 @@ steps:
     #[test]
     fn test_bash_executor_new() {
         let config = Config::default();
-        let executor = BashExecutor::new(std::sync::Arc::new(config));
+        let _executor = BashExecutor::new(std::sync::Arc::new(config));
         // Just verify it can be created
     }
 

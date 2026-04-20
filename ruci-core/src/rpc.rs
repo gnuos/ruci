@@ -66,8 +66,7 @@ impl RpcServer {
     }
 
     async fn serve_tcp(&self, addr: &str) -> Result<()> {
-        let mut listener =
-            tarpc::serde_transport::tcp::listen(addr, || Json::<_, _>::default()).await?;
+        let mut listener = tarpc::serde_transport::tcp::listen(addr, Json::<_, _>::default).await?;
         listener.config_mut().max_frame_length(10 * 1024 * 1024); // 10 MB max frame size
 
         tracing::info!("RPC server listening on {}", addr);
@@ -103,16 +102,15 @@ impl RpcServer {
         // Remove stale socket file if exists
         let _ = std::fs::remove_file(socket_path);
 
-        let mut listener =
-            tarpc::serde_transport::unix::listen(socket_path, || Json::<_, _>::default())
-                .await
-                .map_err(|e| {
-                    crate::error::Error::Rpc(crate::error::RpcError::Server(format!(
-                        "Failed to bind Unix socket {}: {}",
-                        socket_path.display(),
-                        e
-                    )))
-                })?;
+        let mut listener = tarpc::serde_transport::unix::listen(socket_path, Json::<_, _>::default)
+            .await
+            .map_err(|e| {
+                crate::error::Error::Rpc(crate::error::RpcError::Server(format!(
+                    "Failed to bind Unix socket {}: {}",
+                    socket_path.display(),
+                    e
+                )))
+            })?;
 
         listener.config_mut().max_frame_length(10 * 1024 * 1024); // 10 MB max frame size
 

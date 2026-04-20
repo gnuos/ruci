@@ -270,7 +270,7 @@ pub async fn dashboard_page(State(state): State<AppState>, cookies: HeaderMap) -
             .unwrap_or_default();
         success.into_iter().chain(failed).chain(aborted).collect()
     };
-    recent_runs.sort_by(|a, b| b.build_num.cmp(&a.build_num));
+    recent_runs.sort_by_key(|b| std::cmp::Reverse(b.build_num));
     recent_runs.truncate(10);
 
     let recent_runs_html: String = if recent_runs.is_empty() {
@@ -470,9 +470,9 @@ pub async fn runs_page(
             .chain(all_success)
             .chain(all_failed)
             .chain(all_aborted)
-            .filter(|r| query.job_id.as_ref().map_or(true, |jid| &r.job_id == jid))
+            .filter(|r| query.job_id.as_ref().is_none_or(|jid| &r.job_id == jid))
             .collect();
-        runs.sort_by(|a, b| b.build_num.cmp(&a.build_num));
+        runs.sort_by_key(|b| std::cmp::Reverse(b.build_num));
         runs.truncate(100);
         runs
     };

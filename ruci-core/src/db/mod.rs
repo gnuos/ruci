@@ -102,7 +102,7 @@ mod tests {
     #[test]
     fn test_database_kind_from_url() {
         assert!(matches!(
-            DatabaseKind::from_url("sqlite://test.db"),
+            DatabaseKind::from_url("sqlite:///test.db"),
             Ok(DatabaseKind::Sqlite)
         ));
         assert!(matches!(
@@ -135,8 +135,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_repository_sqlite_url() {
-        let repo = create_repository("sqlite://test_url.db").await.unwrap();
+        let repo = create_repository("sqlite:///tmp/test_url.db")
+            .await
+            .unwrap();
         let _ = repo;
-        let _ = std::fs::remove_file("test_url.db");
+        let _ = std::fs::remove_file("/tmp/test_url.db");
     }
 }

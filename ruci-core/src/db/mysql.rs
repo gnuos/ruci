@@ -933,7 +933,6 @@ impl From<UserRow> for UserInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ruci_protocol::JobInfo;
 
     async fn create_test_repo() -> MysqlRepository {
         // Note: MySQL tests require a running MySQL instance

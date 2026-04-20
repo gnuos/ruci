@@ -118,7 +118,7 @@ impl ArchiveManager {
             if path.is_dir() {
                 Self::add_dir_to_tar(builder, base_dir, &path)?;
             } else {
-                builder.append_path_with_name(&path, &relative_path)?;
+                builder.append_path_with_name(&path, relative_path)?;
             }
         }
         Ok(())
@@ -205,7 +205,7 @@ impl ArchiveManager {
             }
         }
 
-        archives.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        archives.sort_by_key(|b| std::cmp::Reverse(b.created_at));
         Ok(archives)
     }
 

@@ -224,7 +224,12 @@ impl AuthService {
     /// Initialize the admin user if it doesn't exist
     pub async fn init_admin_user(&self, admin_username: &str, admin_password: &str) -> Result<()> {
         // Check if admin user exists
-        if let Some(_) = self.db.get_user_by_username(admin_username).await? {
+        if self
+            .db
+            .get_user_by_username(admin_username)
+            .await?
+            .is_some()
+        {
             tracing::info!("Admin user already exists, skipping initialization");
             return Ok(());
         }

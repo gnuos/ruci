@@ -590,9 +590,6 @@ mod tests {
 
     #[test]
     fn test_calculate_checksum_different_content() {
-        use std::fs;
-        use std::io::Write;
-
         let temp_dir = create_temp_dir();
 
         let path1 = temp_dir.path().join("file1.txt");
@@ -609,8 +606,6 @@ mod tests {
 
     #[test]
     fn test_calculate_checksum_empty_file() {
-        use std::fs;
-
         let temp_dir = create_temp_dir();
         let empty_path = temp_dir.path().join("empty.txt");
         std::fs::write(&empty_path, b"").unwrap();
@@ -651,7 +646,7 @@ mod tests {
         let mut temp_file = tempfile::NamedTempFile::new().unwrap();
         temp_file.write_all(binary_content).unwrap();
 
-        let handle = storage
+        let _handle = storage
             .upload("binary-file", temp_file.path())
             .await
             .expect("Failed to upload binary file");

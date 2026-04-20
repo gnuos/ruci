@@ -14,7 +14,7 @@ use ruci_protocol::{JobInfo, RunStatus};
 async fn setup_db() -> Arc<dyn Repository> {
     let repo = create_repository("sqlite::memory:").await.unwrap();
     repo.migrate().await.unwrap();
-    Arc::from(repo)
+    repo
 }
 
 /// Helper to create a test job.
