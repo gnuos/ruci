@@ -50,7 +50,7 @@ once_cell = { workspace = true }
 parking_lot = { workspace = true }
 bytes = { workspace = true }
 tokio-serde = { workspace = true }
-tarpc = { workspace = true, features = ["full", "serde-transport", "tcp"] }
+tarpc = { workspace = true, features = ["full", "serde-transport", "tcp", "unix"] }
 aws-config = { workspace = true }
 sqlx = { workspace = true, features = ["sqlite", "runtime-tokio-native-tls", "migrate", "runtime-tokio", "postgres", "chrono", "mysql"] }
 

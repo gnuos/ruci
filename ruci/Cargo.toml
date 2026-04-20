@@ -36,8 +36,4 @@ thiserror = { workspace = true }
 # Utilities
 bytes = { workspace = true }
 flume.workspace = true
-tarpc = { workspace = true, features = ["serde-transport", "tcp"] }
-
-# Daemon management
-daemonize = { workspace = true }
-nix = { workspace = true, features = ["signal"] }
+tarpc = { workspace = true, features = ["serde-transport", "tcp", "unix"] }

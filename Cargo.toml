@@ -21,7 +21,7 @@ description = "A lightweight CI system written in Rust"
 tokio = { version = "1.40", features = ["full"] }
 
 # RPC
-tarpc = { version = "0.37", features = ["tokio1", "serde-transport", "serde-transport-json"] }
+tarpc = { version = "0.37", features = ["tokio1", "serde-transport", "serde-transport-json", "unix"] }
 
 # Web
 axum = { version = "0.7", features = ["macros"] }

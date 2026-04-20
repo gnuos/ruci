@@ -489,12 +489,21 @@ fn handle_completions(cmd: CompletionsCmd) {
 async fn connect(addr: Option<&str>) -> anyhow::Result<ruci_protocol::RuciRpcClient> {
     let addr = addr.unwrap_or("127.0.0.1:7741");
 
-    let transport = tarpc::serde_transport::tcp::connect(addr, || {
-        tarpc::tokio_serde::formats::Json::<_, _>::default()
-    })
-    .await?;
-    let client =
-        ruci_protocol::RuciRpcClient::new(tarpc::client::Config::default(), transport).spawn();
-
-    Ok(client)
+    if let Some(path) = addr.strip_prefix("unix://") {
+        let transport = tarpc::serde_transport::unix::connect(path, || {
+            tarpc::tokio_serde::formats::Json::<_, _>::default()
+        })
+        .await?;
+        let client =
+            ruci_protocol::RuciRpcClient::new(tarpc::client::Config::default(), transport).spawn();
+        Ok(client)
+    } else {
+        let transport = tarpc::serde_transport::tcp::connect(addr, || {
+            tarpc::tokio_serde::formats::Json::<_, _>::default()
+        })
+        .await?;
+        let client =
+            ruci_protocol::RuciRpcClient::new(tarpc::client::Config::default(), transport).spawn();
+        Ok(client)
+    }
 }
