@@ -132,7 +132,7 @@ pub trait UserRepository: Send + Sync {
 #[async_trait]
 pub trait JobRepository: Send + Sync {
     /// Insert a new job
-    async fn insert_job(&self, job: &JobInfo) -> Result<()>;
+    async fn insert_job(&self, job: &JobInfo, content: &str) -> Result<()>;
 
     /// Get a job by ID
     async fn get_job(&self, job_id: &str) -> Result<Option<JobInfo>>;
@@ -140,8 +140,17 @@ pub trait JobRepository: Send + Sync {
     /// List all jobs
     async fn list_jobs(&self) -> Result<Vec<JobInfo>>;
 
+    /// List jobs with pagination (offset-based)
+    async fn list_jobs_paged(&self, offset: i64, limit: i64) -> Result<Vec<JobInfo>>;
+
     /// Get next build number for a job
     async fn next_build_num(&self, job_id: &str) -> Result<i64>;
+
+    /// Delete a job by ID
+    async fn delete_job(&self, job_id: &str) -> Result<()>;
+
+    /// Update a job's name
+    async fn update_job(&self, job_id: &str, name: &str) -> Result<()>;
 }
 
 /// Repository trait for Run operations
@@ -173,6 +182,12 @@ pub trait RunRepository: Send + Sync {
 
     /// Get run params by run ID (for queue recovery)
     async fn get_run_params(&self, run_id: &str) -> Result<HashMap<String, String>>;
+
+    /// List all runs (any status)
+    async fn list_runs(&self) -> Result<Vec<RunInfo>>;
+
+    /// List runs for a specific job
+    async fn list_runs_by_job(&self, job_id: &str) -> Result<Vec<RunInfo>>;
 }
 
 /// Repository trait for Artifact operations

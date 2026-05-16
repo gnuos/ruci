@@ -103,6 +103,8 @@ impl PostgresRepository {
             );
 
             CREATE INDEX IF NOT EXISTS idx_webhook_triggers_source ON webhook_triggers(source);
+            CREATE INDEX IF NOT EXISTS idx_triggers_job_id ON triggers(job_id);
+            CREATE INDEX IF NOT EXISTS idx_webhook_triggers_job_id ON webhook_triggers(job_id);
 
             CREATE TABLE IF NOT EXISTS vcs_credentials (
                 id TEXT PRIMARY KEY,
@@ -141,15 +143,15 @@ impl PostgresRepository {
 
 #[async_trait]
 impl JobRepository for PostgresRepository {
-    async fn insert_job(&self, job: &JobInfo) -> Result<()> {
+    async fn insert_job(&self, job: &JobInfo, content: &str) -> Result<()> {
         sqlx::query(
-            "INSERT INTO jobs (id, name, filename, content, hash) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO jobs (id, name, filename, content, hash) VALUES ($1, $2, $3, $4, $5) ON CONFLICT(id) DO UPDATE SET name = EXCLUDED.name, filename = EXCLUDED.filename",
         )
         .bind(&job.id)
         .bind(&job.name)
-        .bind(".ruci.yml")
-        .bind("") // content not stored in this struct
-        .bind(&job.id) // hash uses id as placeholder
+        .bind(&job.original_name)
+        .bind(content)
+        .bind(&job.id)
         .execute(&self.pool)
         .await
         .map_err(|e| DbError::Query(e.to_string()))?;
@@ -180,6 +182,19 @@ impl JobRepository for PostgresRepository {
         Ok(rows.into_iter().map(|r| r.into()).collect())
     }
 
+    async fn list_jobs_paged(&self, offset: i64, limit: i64) -> Result<Vec<JobInfo>> {
+        let rows: Vec<JobRow> = sqlx::query_as(
+            "SELECT id, name, filename, content, hash, created_at FROM jobs ORDER BY created_at DESC LIMIT $1 OFFSET $2",
+        )
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DbError::Query(e.to_string()))?;
+
+        Ok(rows.into_iter().map(|r| r.into()).collect())
+    }
+
     async fn next_build_num(&self, job_id: &str) -> Result<i64> {
         let row: (Option<i64>,) =
             sqlx::query_as("SELECT MAX(build_num) FROM runs WHERE job_id = $1")
@@ -189,6 +204,51 @@ impl JobRepository for PostgresRepository {
                 .map_err(|e| DbError::Query(e.to_string()))?;
 
         Ok(row.0.unwrap_or(0) + 1)
+    }
+
+    async fn delete_job(&self, job_id: &str) -> Result<()> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| DbError::Query(e.to_string()))?;
+
+        sqlx::query(
+            "DELETE FROM artifacts WHERE run_id IN (SELECT id FROM runs WHERE job_id = $1)",
+        )
+        .bind(job_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| DbError::Query(e.to_string()))?;
+
+        sqlx::query("DELETE FROM runs WHERE job_id = $1")
+            .bind(job_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| DbError::Query(e.to_string()))?;
+
+        sqlx::query("DELETE FROM jobs WHERE id = $1")
+            .bind(job_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| DbError::Query(e.to_string()))?;
+
+        tx.commit()
+            .await
+            .map_err(|e| DbError::Query(e.to_string()))?;
+
+        Ok(())
+    }
+
+    async fn update_job(&self, job_id: &str, name: &str) -> Result<()> {
+        sqlx::query("UPDATE jobs SET name = $1 WHERE id = $2")
+            .bind(name)
+            .bind(job_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DbError::Query(e.to_string()))?;
+
+        Ok(())
     }
 }
 
@@ -316,6 +376,42 @@ impl RunRepository for PostgresRepository {
             },
             None => Ok(HashMap::new()),
         }
+    }
+
+    async fn list_runs(&self) -> Result<Vec<RunInfo>> {
+        let rows: Vec<RunRow> = sqlx::query_as(
+            r#"
+            SELECT r.id, r.job_id, j.name as job_name, r.build_num, r.status,
+                   r.started_at, r.finished_at, r.exit_code, r.created_at
+            FROM runs r
+            JOIN jobs j ON r.job_id = j.id
+            ORDER BY r.created_at DESC
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DbError::Query(e.to_string()))?;
+
+        Ok(rows.into_iter().map(|r| r.into()).collect())
+    }
+
+    async fn list_runs_by_job(&self, job_id: &str) -> Result<Vec<RunInfo>> {
+        let rows: Vec<RunRow> = sqlx::query_as(
+            r#"
+            SELECT r.id, r.job_id, j.name as job_name, r.build_num, r.status,
+                   r.started_at, r.finished_at, r.exit_code, r.created_at
+            FROM runs r
+            JOIN jobs j ON r.job_id = j.id
+            WHERE r.job_id = $1
+            ORDER BY r.build_num DESC
+            "#,
+        )
+        .bind(job_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DbError::Query(e.to_string()))?;
+
+        Ok(rows.into_iter().map(|r| r.into()).collect())
     }
 }
 

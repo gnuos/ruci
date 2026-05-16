@@ -108,6 +108,8 @@ impl SqliteRepository {
             );
 
             CREATE INDEX IF NOT EXISTS idx_webhook_triggers_source ON webhook_triggers(source);
+            CREATE INDEX IF NOT EXISTS idx_triggers_job_id ON triggers(job_id);
+            CREATE INDEX IF NOT EXISTS idx_webhook_triggers_job_id ON webhook_triggers(job_id);
 
             CREATE TABLE IF NOT EXISTS vcs_credentials (
                 id TEXT PRIMARY KEY,
@@ -146,13 +148,13 @@ impl SqliteRepository {
 
 #[async_trait]
 impl JobRepository for SqliteRepository {
-    async fn insert_job(&self, job: &JobInfo) -> Result<()> {
-        sqlx::query("INSERT INTO jobs (id, name, filename, content, hash) VALUES (?, ?, ?, ?, ?)")
+    async fn insert_job(&self, job: &JobInfo, content: &str) -> Result<()> {
+        sqlx::query("INSERT INTO jobs (id, name, filename, content, hash) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name = excluded.name, filename = excluded.filename")
             .bind(&job.id)
             .bind(&job.name)
-            .bind(".ruci.yml")
-            .bind("") // content not stored in this struct
-            .bind(&job.id) // hash uses id as placeholder
+            .bind(&job.original_name)
+            .bind(content)
+            .bind(&job.id)
             .execute(&self.pool)
             .await
             .map_err(|e| DbError::Query(e.to_string()))?;
@@ -183,6 +185,19 @@ impl JobRepository for SqliteRepository {
         Ok(rows.into_iter().map(|r| r.into()).collect())
     }
 
+    async fn list_jobs_paged(&self, offset: i64, limit: i64) -> Result<Vec<JobInfo>> {
+        let rows: Vec<JobRow> = sqlx::query_as(
+            "SELECT id, name, filename, content, hash, created_at FROM jobs ORDER BY created_at DESC LIMIT ? OFFSET ?",
+        )
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DbError::Query(e.to_string()))?;
+
+        Ok(rows.into_iter().map(|r| r.into()).collect())
+    }
+
     async fn next_build_num(&self, job_id: &str) -> Result<i64> {
         let row: (Option<i64>,) =
             sqlx::query_as("SELECT MAX(build_num) FROM runs WHERE job_id = ?")
@@ -192,6 +207,49 @@ impl JobRepository for SqliteRepository {
                 .map_err(|e| DbError::Query(e.to_string()))?;
 
         Ok(row.0.unwrap_or(0) + 1)
+    }
+
+    async fn delete_job(&self, job_id: &str) -> Result<()> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| DbError::Query(e.to_string()))?;
+
+        sqlx::query("DELETE FROM artifacts WHERE run_id IN (SELECT id FROM runs WHERE job_id = ?)")
+            .bind(job_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| DbError::Query(e.to_string()))?;
+
+        sqlx::query("DELETE FROM runs WHERE job_id = ?")
+            .bind(job_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| DbError::Query(e.to_string()))?;
+
+        sqlx::query("DELETE FROM jobs WHERE id = ?")
+            .bind(job_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| DbError::Query(e.to_string()))?;
+
+        tx.commit()
+            .await
+            .map_err(|e| DbError::Query(e.to_string()))?;
+
+        Ok(())
+    }
+
+    async fn update_job(&self, job_id: &str, name: &str) -> Result<()> {
+        sqlx::query("UPDATE jobs SET name = ? WHERE id = ?")
+            .bind(name)
+            .bind(job_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DbError::Query(e.to_string()))?;
+
+        Ok(())
     }
 }
 
@@ -319,6 +377,42 @@ impl RunRepository for SqliteRepository {
             },
             None => Ok(HashMap::new()),
         }
+    }
+
+    async fn list_runs(&self) -> Result<Vec<RunInfo>> {
+        let rows: Vec<RunRow> = sqlx::query_as(
+            r#"
+            SELECT r.id, r.job_id, j.name as job_name, r.build_num, r.status,
+                   r.started_at, r.finished_at, r.exit_code, r.created_at
+            FROM runs r
+            JOIN jobs j ON r.job_id = j.id
+            ORDER BY r.created_at DESC
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DbError::Query(e.to_string()))?;
+
+        Ok(rows.into_iter().map(|r| r.into()).collect())
+    }
+
+    async fn list_runs_by_job(&self, job_id: &str) -> Result<Vec<RunInfo>> {
+        let rows: Vec<RunRow> = sqlx::query_as(
+            r#"
+            SELECT r.id, r.job_id, j.name as job_name, r.build_num, r.status,
+                   r.started_at, r.finished_at, r.exit_code, r.created_at
+            FROM runs r
+            JOIN jobs j ON r.job_id = j.id
+            WHERE r.job_id = ?
+            ORDER BY r.build_num DESC
+            "#,
+        )
+        .bind(job_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DbError::Query(e.to_string()))?;
+
+        Ok(rows.into_iter().map(|r| r.into()).collect())
     }
 }
 
@@ -966,7 +1060,7 @@ mod tests {
             submitted_at: chrono::Utc::now(),
         };
 
-        repo.insert_job(&job).await.unwrap();
+        repo.insert_job(&job, "").await.unwrap();
         let retrieved = repo.get_job("job-1").await.unwrap();
 
         assert!(retrieved.is_some());
@@ -993,7 +1087,7 @@ mod tests {
                 original_name: ".ruci.yml".to_string(),
                 submitted_at: chrono::Utc::now(),
             };
-            repo.insert_job(&job).await.unwrap();
+            repo.insert_job(&job, "").await.unwrap();
         }
 
         let jobs = repo.list_jobs().await.unwrap();
@@ -1016,7 +1110,7 @@ mod tests {
             original_name: ".ruci.yml".to_string(),
             submitted_at: chrono::Utc::now(),
         };
-        repo.insert_job(&job).await.unwrap();
+        repo.insert_job(&job, "").await.unwrap();
 
         let build_num = repo.next_build_num("job-build").await.unwrap();
         assert_eq!(build_num, 1);
@@ -1037,7 +1131,7 @@ mod tests {
             original_name: ".ruci.yml".to_string(),
             submitted_at: chrono::Utc::now(),
         };
-        repo.insert_job(&job).await.unwrap();
+        repo.insert_job(&job, "").await.unwrap();
 
         // Insert run
         repo.insert_run("run-1", "job-run", 1, "QUEUED", None)
@@ -1063,7 +1157,7 @@ mod tests {
             original_name: ".ruci.yml".to_string(),
             submitted_at: chrono::Utc::now(),
         };
-        repo.insert_job(&job).await.unwrap();
+        repo.insert_job(&job, "").await.unwrap();
 
         repo.insert_run("run-update", "job-update", 1, "QUEUED", None)
             .await
@@ -1088,7 +1182,7 @@ mod tests {
             original_name: ".ruci.yml".to_string(),
             submitted_at: chrono::Utc::now(),
         };
-        repo.insert_job(&job).await.unwrap();
+        repo.insert_job(&job, "").await.unwrap();
 
         repo.insert_run("run-exit", "job-exit", 1, "QUEUED", None)
             .await
@@ -1113,7 +1207,7 @@ mod tests {
             original_name: ".ruci.yml".to_string(),
             submitted_at: chrono::Utc::now(),
         };
-        repo.insert_job(&job).await.unwrap();
+        repo.insert_job(&job, "").await.unwrap();
 
         repo.insert_run("run-1", "job-list", 1, "QUEUED", None)
             .await
@@ -1159,7 +1253,7 @@ mod tests {
             original_name: ".ruci.yml".to_string(),
             submitted_at: chrono::Utc::now(),
         };
-        repo.insert_job(&job).await.unwrap();
+        repo.insert_job(&job, "").await.unwrap();
 
         repo.insert_run("run-artifact", "job-artifact", 1, "SUCCESS", None)
             .await
@@ -1195,7 +1289,7 @@ mod tests {
             original_name: ".ruci.yml".to_string(),
             submitted_at: chrono::Utc::now(),
         };
-        repo.insert_job(&job).await.unwrap();
+        repo.insert_job(&job, "").await.unwrap();
 
         repo.insert_run(
             "run-list-artifacts",
@@ -1228,7 +1322,7 @@ mod tests {
             original_name: ".ruci.yml".to_string(),
             submitted_at: chrono::Utc::now(),
         };
-        repo.insert_job(&job).await.unwrap();
+        repo.insert_job(&job, "").await.unwrap();
 
         repo.insert_run("run-no-artifacts", "job-no-artifacts", 1, "SUCCESS", None)
             .await
@@ -1277,7 +1371,7 @@ mod tests {
             original_name: ".ruci.yml".to_string(),
             submitted_at: chrono::Utc::now(),
         };
-        repo.insert_job(&job).await.unwrap();
+        repo.insert_job(&job, "").await.unwrap();
 
         // Insert multiple runs
         repo.insert_run("run-1", "job-multi-run", 1, "QUEUED", None)
@@ -1304,7 +1398,7 @@ mod tests {
             original_name: ".ruci.yml".to_string(),
             submitted_at: chrono::Utc::now(),
         };
-        repo.insert_job(&job).await.unwrap();
+        repo.insert_job(&job, "").await.unwrap();
 
         repo.insert_run("run-unknown", "job-unknown-status", 1, "QUEUED", None)
             .await
@@ -1352,7 +1446,7 @@ mod tests {
             original_name: ".ruci.yml".to_string(),
             submitted_at: chrono::Utc::now(),
         };
-        repo.insert_job(&job).await.unwrap();
+        repo.insert_job(&job, "").await.unwrap();
 
         repo.insert_run("run-1", "job-no-queued", 1, "SUCCESS", None)
             .await
@@ -1375,7 +1469,7 @@ mod tests {
             original_name: ".ruci.yml".to_string(),
             submitted_at: chrono::Utc::now(),
         };
-        repo.insert_job(&job).await.unwrap();
+        repo.insert_job(&job, "").await.unwrap();
 
         repo.insert_run(
             "run-multi-artifact",
@@ -1405,5 +1499,36 @@ mod tests {
         let a1 = repo.get_artifact("a1").await.unwrap();
         assert!(a1.is_some());
         assert_eq!(a1.unwrap().name, "file1.txt");
+    }
+
+    #[tokio::test]
+    async fn test_delete_job_cascade() {
+        let repo = create_test_repo().await;
+
+        let job = JobInfo {
+            id: "job-cascade".to_string(),
+            name: "cascade-job".to_string(),
+            original_name: ".ruci.yml".to_string(),
+            submitted_at: chrono::Utc::now(),
+        };
+        repo.insert_job(&job, "").await.unwrap();
+
+        repo.insert_run("run-c1", "job-cascade", 1, "SUCCESS", None)
+            .await
+            .unwrap();
+        repo.insert_run("run-c2", "job-cascade", 2, "QUEUED", None)
+            .await
+            .unwrap();
+
+        repo.insert_artifact("a-c1", "run-c1", "out.bin", 512, "abc", "/tmp/out")
+            .await
+            .unwrap();
+
+        repo.delete_job("job-cascade").await.unwrap();
+
+        assert!(repo.get_job("job-cascade").await.unwrap().is_none());
+        assert!(repo.get_run("run-c1").await.unwrap().is_none());
+        assert!(repo.get_run("run-c2").await.unwrap().is_none());
+        assert!(repo.get_artifact("a-c1").await.unwrap().is_none());
     }
 }

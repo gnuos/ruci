@@ -158,13 +158,19 @@ pub trait RuciRpc {
     async fn abort_job(run_id: RunId);
     async fn list_jobs() -> Vec<JobInfo>;
     async fn get_job(job_id: JobId) -> Option<JobInfo>;
+    async fn delete_job(job_id: JobId) -> bool;
+    async fn update_job(job_id: JobId, name: String) -> bool;
 
     // Job Submission (Travis CI style)
     async fn submit_job(yaml_content: String) -> JobSubmitResponse;
+    async fn register_job(yaml_content: String) -> JobSubmitResponse;
 
     // Run Status
     async fn list_queued() -> Vec<RunInfo>;
     async fn list_running() -> Vec<RunInfo>;
+    async fn list_runs() -> Vec<RunInfo>;
+    async fn list_runs_by_status(status: String) -> Vec<RunInfo>;
+    async fn list_runs_by_job(job_id: JobId) -> Vec<RunInfo>;
     async fn get_run(run_id: RunId) -> Option<RunInfo>;
     async fn get_run_log(run_id: RunId) -> String;
 

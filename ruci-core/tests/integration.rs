@@ -36,7 +36,7 @@ async fn test_job_insert_and_retrieve_preserves_submitted_at() {
     let db = setup_db().await;
     let job = test_job("job-1", "build-project");
 
-    db.insert_job(&job).await.unwrap();
+    db.insert_job(&job, "").await.unwrap();
     let retrieved = db.get_job("job-1").await.unwrap().unwrap();
 
     assert_eq!(retrieved.id, "job-1");
@@ -57,7 +57,7 @@ async fn test_list_jobs_returns_all() {
     let db = setup_db().await;
 
     for i in 0..5 {
-        db.insert_job(&test_job(&format!("job-{}", i), &format!("job-{}", i)))
+        db.insert_job(&test_job(&format!("job-{}", i), &format!("job-{}", i)), "")
             .await
             .unwrap();
     }
@@ -69,7 +69,7 @@ async fn test_list_jobs_returns_all() {
 #[tokio::test]
 async fn test_next_build_num_increments() {
     let db = setup_db().await;
-    db.insert_job(&test_job("job-1", "test")).await.unwrap();
+    db.insert_job(&test_job("job-1", "test"), "").await.unwrap();
 
     let n1 = db.next_build_num("job-1").await.unwrap();
     assert_eq!(n1, 1);
@@ -89,7 +89,7 @@ async fn test_next_build_num_increments() {
 #[tokio::test]
 async fn test_run_full_lifecycle_with_exit_code() {
     let db = setup_db().await;
-    db.insert_job(&test_job("job-1", "test")).await.unwrap();
+    db.insert_job(&test_job("job-1", "test"), "").await.unwrap();
 
     // Queue
     db.insert_run("run-1", "job-1", 1, "QUEUED", None)
@@ -122,7 +122,7 @@ async fn test_run_full_lifecycle_with_exit_code() {
 #[tokio::test]
 async fn test_run_failure_exit_code() {
     let db = setup_db().await;
-    db.insert_job(&test_job("job-1", "test")).await.unwrap();
+    db.insert_job(&test_job("job-1", "test"), "").await.unwrap();
     db.insert_run("run-1", "job-1", 1, "QUEUED", None)
         .await
         .unwrap();
@@ -143,7 +143,7 @@ async fn test_run_failure_exit_code() {
 #[tokio::test]
 async fn test_run_abort_exit_code() {
     let db = setup_db().await;
-    db.insert_job(&test_job("job-1", "test")).await.unwrap();
+    db.insert_job(&test_job("job-1", "test"), "").await.unwrap();
     db.insert_run("run-1", "job-1", 1, "QUEUED", None)
         .await
         .unwrap();
@@ -164,7 +164,7 @@ async fn test_run_abort_exit_code() {
 #[tokio::test]
 async fn test_list_runs_by_status() {
     let db = setup_db().await;
-    db.insert_job(&test_job("job-1", "test")).await.unwrap();
+    db.insert_job(&test_job("job-1", "test"), "").await.unwrap();
 
     // Create runs in different states
     db.insert_run("run-q1", "job-1", 1, "QUEUED", None)
@@ -187,7 +187,7 @@ async fn test_list_runs_by_status() {
 #[tokio::test]
 async fn test_run_params_persistence() {
     let db = setup_db().await;
-    db.insert_job(&test_job("job-1", "test")).await.unwrap();
+    db.insert_job(&test_job("job-1", "test"), "").await.unwrap();
 
     let params_json = r#"{"branch":"main","env":"prod"}"#;
     db.insert_run("run-1", "job-1", 1, "QUEUED", Some(params_json))
@@ -349,7 +349,7 @@ async fn test_user_crud() {
 #[tokio::test]
 async fn test_trigger_crud() {
     let db = setup_db().await;
-    db.insert_job(&test_job("job-1", "test")).await.unwrap();
+    db.insert_job(&test_job("job-1", "test"), "").await.unwrap();
 
     use ruci_core::db::repository::TriggerInfo;
 
@@ -381,7 +381,7 @@ async fn test_trigger_crud() {
 #[tokio::test]
 async fn test_webhook_trigger_crud() {
     let db = setup_db().await;
-    db.insert_job(&test_job("job-1", "test")).await.unwrap();
+    db.insert_job(&test_job("job-1", "test"), "").await.unwrap();
 
     use ruci_core::db::{WebhookEvent, WebhookFilter, WebhookSource, WebhookTriggerInfo};
 

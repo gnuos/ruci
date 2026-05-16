@@ -265,6 +265,57 @@ impl RuciRpc for RuciRpcImpl {
         self.db.get_job(&job_id).await.unwrap_or(None)
     }
 
+    async fn delete_job(self, _: Context, job_id: String) -> bool {
+        // Clean up artifact files from storage before DB cascade delete
+        match self.db.list_runs_by_job(&job_id).await {
+            Ok(runs) => {
+                for run in &runs {
+                    match self.db.list_artifacts(&run.id).await {
+                        Ok(artifacts) => {
+                            for artifact in &artifacts {
+                                if !artifact.storage_path.is_empty() {
+                                    if let Err(e) =
+                                        self.storage.delete(&artifact.storage_path).await
+                                    {
+                                        tracing::warn!(
+                                            "Failed to delete artifact file {}: {}",
+                                            artifact.storage_path,
+                                            e
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to list artifacts for run {}: {}", run.id, e);
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to list runs for job {}: {}", job_id, e);
+            }
+        }
+
+        match self.db.delete_job(&job_id).await {
+            Ok(_) => true,
+            Err(e) => {
+                tracing::error!("Failed to delete job {}: {}", job_id, e);
+                false
+            }
+        }
+    }
+
+    async fn update_job(self, _: Context, job_id: String, name: String) -> bool {
+        match self.db.update_job(&job_id, &name).await {
+            Ok(_) => true,
+            Err(e) => {
+                tracing::error!("Failed to update job {}: {}", job_id, e);
+                false
+            }
+        }
+    }
+
     async fn submit_job(self, _: Context, yaml_content: String) -> JobSubmitResponse {
         let job = match Job::parse(&yaml_content) {
             Ok(j) => j,
@@ -293,7 +344,7 @@ impl RuciRpc for RuciRpcImpl {
             original_name: ".ruci.yml".to_string(),
             submitted_at: chrono::Utc::now(),
         };
-        if let Err(e) = self.db.insert_job(&job_info).await {
+        if let Err(e) = self.db.insert_job(&job_info, &yaml_content).await {
             tracing::error!("Failed to insert job: {}", e);
             return JobSubmitResponse::error(
                 ErrorCode::DatabaseError,
@@ -334,6 +385,46 @@ impl RuciRpc for RuciRpcImpl {
         JobSubmitResponse::success(job_id, run_id, build_num as u64)
     }
 
+    async fn register_job(self, _: Context, yaml_content: String) -> JobSubmitResponse {
+        let job = match Job::parse(&yaml_content) {
+            Ok(j) => j,
+            Err(e) => {
+                tracing::error!("Failed to parse job: {}", e);
+                return JobSubmitResponse::error(
+                    ErrorCode::InvalidParams,
+                    format!("Invalid YAML: {}", e),
+                );
+            }
+        };
+
+        let job_id = Config::short_hash(&yaml_content);
+        let job_path = format!("{}/{}.yaml", self.config.paths.jobs_dir, job_id);
+        if let Err(e) = std::fs::write(&job_path, &yaml_content) {
+            tracing::error!("Failed to write job file: {}", e);
+            return JobSubmitResponse::error(
+                ErrorCode::Internal,
+                format!("Failed to write job file: {}", e),
+            );
+        }
+
+        let job_info = JobInfo {
+            id: job_id.clone(),
+            name: job.name.clone(),
+            original_name: ".ruci.yml".to_string(),
+            submitted_at: chrono::Utc::now(),
+        };
+        if let Err(e) = self.db.insert_job(&job_info, &yaml_content).await {
+            tracing::error!("Failed to insert job: {}", e);
+            return JobSubmitResponse::error(
+                ErrorCode::DatabaseError,
+                format!("Failed to save job: {}", e),
+            );
+        }
+
+        // Return with empty run_id and build_num 0 to indicate no run was created
+        JobSubmitResponse::success(job_id, String::new(), 0)
+    }
+
     async fn list_queued(self, _: Context) -> Vec<RunInfo> {
         self.db
             .list_runs_by_status("QUEUED")
@@ -351,6 +442,39 @@ impl RuciRpc for RuciRpcImpl {
             .await
             .map_err(|e| {
                 tracing::warn!("Failed to list running runs: {}", e);
+                e
+            })
+            .unwrap_or_default()
+    }
+
+    async fn list_runs(self, _: Context) -> Vec<RunInfo> {
+        self.db
+            .list_runs()
+            .await
+            .map_err(|e| {
+                tracing::warn!("Failed to list runs: {}", e);
+                e
+            })
+            .unwrap_or_default()
+    }
+
+    async fn list_runs_by_status(self, _: Context, status: String) -> Vec<RunInfo> {
+        self.db
+            .list_runs_by_status(&status)
+            .await
+            .map_err(|e| {
+                tracing::warn!("Failed to list runs by status {}: {}", status, e);
+                e
+            })
+            .unwrap_or_default()
+    }
+
+    async fn list_runs_by_job(self, _: Context, job_id: String) -> Vec<RunInfo> {
+        self.db
+            .list_runs_by_job(&job_id)
+            .await
+            .map_err(|e| {
+                tracing::warn!("Failed to list runs for job {}: {}", job_id, e);
                 e
             })
             .unwrap_or_default()

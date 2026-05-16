@@ -433,19 +433,18 @@ impl Executor for BashExecutor {
 }
 
 impl Config {
-    /// Calculate content hash for a job file
+    /// Calculate content hash for a job file (hex-encoded SHA-256)
     pub fn hash_job_content(content: &str) -> String {
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(content.as_bytes());
         let result = hasher.finalize();
-        base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, result)
+        hex::encode(result)
     }
 
-    /// Generate short hash (16 chars) for file naming
+    /// Generate short hash (24 hex chars = 12 bytes) for file naming
     pub fn short_hash(content: &str) -> String {
-        let full = Self::hash_job_content(content);
-        full.chars().take(16).collect()
+        Self::hash_job_content(content)[..24].to_string()
     }
 }
 
@@ -539,9 +538,10 @@ steps:
         // Same content should produce same hash
         assert_eq!(hash1, hash2);
 
-        // Hash should be base64 URL-safe encoded
-        assert!(!hash1.contains('+'));
-        assert!(!hash1.contains('/'));
+        // Hash should be hex encoded (only 0-9, a-f)
+        assert!(hash1.chars().all(|c| c.is_ascii_hexdigit()));
+        // SHA-256 hex should be 64 chars
+        assert_eq!(hash1.len(), 64);
     }
 
     #[test]
@@ -549,11 +549,15 @@ steps:
         let content = "test content for short hash";
         let short = Config::short_hash(content);
 
-        // Short hash should be 16 characters
-        assert_eq!(short.len(), 16);
-
+        // Short hash should be 24 hex characters
+        assert_eq!(short.len(), 24);
+        // Should only contain hex chars
+        assert!(short.chars().all(|c| c.is_ascii_hexdigit()));
         // Should be consistent
         assert_eq!(short, Config::short_hash(content));
+        // Should be prefix of full hash
+        let full = Config::hash_job_content(content);
+        assert_eq!(short, &full[..24]);
     }
 
     #[test]
@@ -759,7 +763,7 @@ steps:
     #[test]
     fn test_short_hash_empty() {
         let short = Config::short_hash("");
-        assert_eq!(short.len(), 16);
+        assert_eq!(short.len(), 24);
     }
 
     #[test]
