@@ -43,7 +43,7 @@ ruci/
 │   │   ├── storage.rs      # 存储抽象 (local/S3)
 │   │   ├── rpc.rs          # RPC 服务端
 │   │   ├── trigger.rs      # Cron 触发器调度
-│   │   ├── auth.rs         # 认证服务 (bcrypt)
+│   │   ├── auth.rs         # 认证服务 (Argon2id)
 │   │   ├── metrics.rs      # Prometheus 指标
 │   │   ├── archive.rs      # 作业归档
 │   │   └── vcs.rs          # VCS/Git 操作
@@ -80,7 +80,7 @@ ruci/
 | 数据库 | sqlx | (sqlite, postgres, mysql) |
 | S3 存储 | aws-sdk-s3 | 1 |
 | CLI | clap | 4.5 |
-| 认证 | bcrypt | - |
+| 认证 | Argon2id (argon2) | - |
 | 日志 | tracing + tracing-appender | - |
 | 调度 | tokio-cron-scheduler | 0.10 |
 | 指标 | prometheus-client | 0.22 |
@@ -123,7 +123,7 @@ ruci/
 │  └──────────┘ └─────────┘ └──────────┘ └─────────────┘   │
 │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌────────────┐   │
 │  │ archive/ │ │ trigger/ │ │  vcs/    │ │   auth/    │   │
-│  │          │ │ scheduler│ │  (Git)   │ │  (bcrypt)  │   │
+│  │          │ │ scheduler│ │  (Git)   │ │(Argon2id)  │   │
 │  └──────────┘ └──────────┘ └──────────┘ └────────────┘   │
 └─────────────────────┬────────────────────────────────────┘
                       │

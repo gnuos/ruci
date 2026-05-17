@@ -126,6 +126,9 @@ pub trait UserRepository: Send + Sync {
 
     /// List all users
     async fn list_users(&self) -> Result<Vec<UserInfo>>;
+
+    /// Update a user's password hash
+    async fn update_password(&self, user_id: &str, new_password_hash: &str) -> Result<()>;
 }
 
 /// Repository trait for Job operations

@@ -91,6 +91,7 @@ fn base_html(title: &str, content: &str) -> String {
                 <a href="/ui/queue" class="hover:text-blue-400">Queue</a>
                 <a href="/ui/triggers" class="hover:text-blue-400">Triggers</a>
                 <a href="/ui/webhooks" class="hover:text-blue-400">Webhooks</a>
+                <a href="/ui/password" class="hover:text-blue-400">Password</a>
                 <form action="/ui/logout" method="post" class="inline">
                     <button type="submit" class="hover:text-red-400">Logout</button>
                 </form>
@@ -1441,5 +1442,130 @@ pub async fn webhook_delete_handler(
             tracing::error!(webhook = %name, error = %e, "Failed to delete webhook");
             Html(base_html("Error", &format!(r#"<p class="text-red-400">Failed to delete webhook: {}</p><a href="/ui/webhooks" class="text-blue-400 hover:underline">Back</a>"#, e))).into_response()
         }
+    }
+}
+
+/// Change password page handler
+pub async fn change_password_page(
+    State(state): State<AppState>,
+    cookies: HeaderMap,
+) -> Response {
+    if get_session_from_cookies(&state.context.auth, &cookies).is_none() {
+        return axum::response::Redirect::to("/ui/login").into_response();
+    }
+
+    let content = r#"
+    <div class="max-w-md mx-auto mt-10">
+        <div class="bg-gray-800 rounded-lg p-8 border border-gray-700">
+            <h1 class="text-2xl font-bold mb-6 text-center">Change Password</h1>
+            <form action="/ui/password" method="post" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium mb-2">Current Password</label>
+                    <input type="password" name="old_password" required
+                           class="w-full px-4 py-2 rounded bg-gray-700 border border-gray-600 focus:border-blue-500 focus:outline-none">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-2">New Password</label>
+                    <input type="password" name="new_password" required minlength="6"
+                           class="w-full px-4 py-2 rounded bg-gray-700 border border-gray-600 focus:border-blue-500 focus:outline-none">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-2">Confirm New Password</label>
+                    <input type="password" name="confirm_password" required minlength="6"
+                           class="w-full px-4 py-2 rounded bg-gray-700 border border-gray-600 focus:border-blue-500 focus:outline-none">
+                </div>
+                <button type="submit"
+                        class="w-full bg-blue-600 hover:bg-blue-700 py-2 rounded font-semibold transition">
+                    Update Password
+                </button>
+            </form>
+        </div>
+    </div>
+    "#;
+    Html(base_html("Change Password", content)).into_response()
+}
+
+/// Change password form data
+#[derive(Deserialize)]
+pub struct ChangePasswordForm {
+    old_password: String,
+    new_password: String,
+    confirm_password: String,
+}
+
+/// Change password form submission handler
+pub async fn change_password_handler(
+    State(state): State<AppState>,
+    cookies: HeaderMap,
+    Form(form): Form<ChangePasswordForm>,
+) -> Response {
+    let session = match get_session_from_cookies(&state.context.auth, &cookies) {
+        Some(s) => s,
+        None => return axum::response::Redirect::to("/ui/login").into_response(),
+    };
+
+    if form.new_password != form.confirm_password {
+        return Html(base_html(
+            "Change Password",
+            r#"
+            <div class="max-w-md mx-auto mt-10">
+                <div class="bg-red-900 border border-red-700 text-red-300 px-4 py-3 rounded mb-4">
+                    New passwords do not match.
+                </div>
+                <a href="/ui/password" class="text-blue-400 hover:underline">Try again</a>
+            </div>
+            "#,
+        ))
+        .into_response();
+    }
+
+    if form.new_password.len() < 6 {
+        return Html(base_html(
+            "Change Password",
+            r#"
+            <div class="max-w-md mx-auto mt-10">
+                <div class="bg-red-900 border border-red-700 text-red-300 px-4 py-3 rounded mb-4">
+                    New password must be at least 6 characters.
+                </div>
+                <a href="/ui/password" class="text-blue-400 hover:underline">Try again</a>
+            </div>
+            "#,
+        ))
+        .into_response();
+    }
+
+    match state
+        .context
+        .auth
+        .change_password(&session.username, &form.old_password, &form.new_password)
+        .await
+    {
+        Ok(_) => Html(base_html(
+            "Password Changed",
+            r#"
+            <div class="max-w-md mx-auto mt-10">
+                <div class="bg-green-900 border border-green-700 text-green-300 px-4 py-3 rounded mb-4">
+                    Password changed successfully.
+                </div>
+                <a href="/" class="text-blue-400 hover:underline">Back to Dashboard</a>
+            </div>
+            "#,
+        ))
+        .into_response(),
+        Err(e) => Html(base_html(
+            "Change Password",
+            &format!(
+                r#"
+                <div class="max-w-md mx-auto mt-10">
+                    <div class="bg-red-900 border border-red-700 text-red-300 px-4 py-3 rounded mb-4">
+                        {}
+                    </div>
+                    <a href="/ui/password" class="text-blue-400 hover:underline">Try again</a>
+                </div>
+                "#,
+                e
+            ),
+        ))
+        .into_response(),
     }
 }

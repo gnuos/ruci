@@ -56,7 +56,9 @@ aws-config = { workspace = true }
 sqlx = { workspace = true, features = ["sqlite", "runtime-tokio-native-tls", "migrate", "runtime-tokio", "postgres", "chrono", "mysql"] }
 
 # Auth
-bcrypt = { workspace = true }
+argon2 = { workspace = true }
+password-hash = { workspace = true }
+rand_core = { workspace = true }
 
 # Metrics
 prometheus-client = { workspace = true }

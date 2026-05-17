@@ -406,6 +406,8 @@ async fn run_server(config: Config, socket_path: PathBuf) -> anyhow::Result<bool
                 .route("/ui/queue", get(handlers::queue_page))
                 .route("/ui/triggers", get(handlers::triggers_page))
                 .route("/ui/webhooks", get(handlers::webhooks_page))
+                .route("/ui/password", get(handlers::change_password_page))
+                .route("/ui/password", post(handlers::change_password_handler))
                 .route(
                     "/api/triggers/:name/enable",
                     post(handlers::trigger_enable_handler),

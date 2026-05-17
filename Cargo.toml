@@ -8,7 +8,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.4"
 edition = "2021"
 authors = ["Ruci Team"]
 license = "MIT OR Apache-2.0"
@@ -71,7 +71,9 @@ parking_lot = "0.12"
 # Metrics
 prometheus-client = "0.22"
 aws-config = "1.8.15"
-bcrypt = "0.15"
+argon2 = { version = "0.5", features = ["std"] }
+password-hash = { version = "0.5", features = ["rand_core"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
 daemonize = "0.5"
 hex = "0.4"
 nix = "0.28"

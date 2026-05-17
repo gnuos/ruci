@@ -72,7 +72,7 @@ Ruci 是一个轻量级的 CI 系统，使用 Rust 编写。
 **描述**: 目前只有 REST API，可以添加简单的 HTML 界面。
 
 **当前状态**: ✅ 已完成
-- 多用户认证系统（bcrypt 密码哈希）
+- 多用户认证系统（Argon2id 密码哈希）
 - Session-based 认证（内存存储）
 - Tailwind CSS 深色主题
 - SSE 实时日志流

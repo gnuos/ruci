@@ -50,15 +50,34 @@ impl AuthService {
         }
     }
 
-    /// Hash a password using bcrypt
+    /// Hash a password using Argon2id
     pub fn hash_password(password: &str) -> crate::error::Result<String> {
-        bcrypt::hash(password, bcrypt::DEFAULT_COST)
-            .map_err(|e| crate::error::Error::Other(e.to_string()))
+        use argon2::Argon2;
+        use password_hash::{rand_core::OsRng, PasswordHasher, SaltString};
+
+        let salt = SaltString::generate(&mut OsRng);
+        let argon2 = Argon2::new(
+            argon2::Algorithm::Argon2id,
+            argon2::Version::V0x13,
+            argon2::Params::new(65536, 3, 1, None)
+                .map_err(|e| crate::error::Error::Other(e.to_string()))?,
+        );
+        let hash = argon2
+            .hash_password(password.as_bytes(), &salt)
+            .map_err(|e| crate::error::Error::Other(e.to_string()))?;
+        Ok(hash.to_string())
     }
 
-    /// Verify a password against a bcrypt hash
+    /// Verify a password against an Argon2id hash
     pub fn verify_password(password: &str, hash: &str) -> crate::error::Result<bool> {
-        bcrypt::verify(password, hash).map_err(|e| crate::error::Error::Other(e.to_string()))
+        use argon2::Argon2;
+        use password_hash::{PasswordHash, PasswordVerifier};
+
+        let parsed_hash =
+            PasswordHash::new(hash).map_err(|e| crate::error::Error::Other(e.to_string()))?;
+        Ok(Argon2::default()
+            .verify_password(password.as_bytes(), &parsed_hash)
+            .is_ok())
     }
 
     /// Authenticate a user with username and password
@@ -219,6 +238,32 @@ impl AuthService {
     pub fn active_sessions_count(&self) -> usize {
         let sessions = self.sessions.read();
         sessions.len()
+    }
+
+    /// Change a user's password after verifying the old password
+    pub async fn change_password(
+        &self,
+        username: &str,
+        old_password: &str,
+        new_password: &str,
+    ) -> Result<()> {
+        let user = self
+            .db
+            .get_user_by_username(username)
+            .await?
+            .ok_or_else(|| crate::error::Error::Other("User not found".to_string()))?;
+
+        if !Self::verify_password(old_password, &user.password_hash)? {
+            return Err(crate::error::Error::Other(
+                "Current password is incorrect".to_string(),
+            ));
+        }
+
+        let new_hash = Self::hash_password(new_password)?;
+        self.db.update_password(&user.id, &new_hash).await?;
+
+        tracing::info!("Password changed for user: {}", username);
+        Ok(())
     }
 
     /// Initialize the admin user if it doesn't exist

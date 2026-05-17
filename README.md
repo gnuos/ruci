@@ -26,7 +26,7 @@
 
 ### Web UI
 
-- 多用户认证（bcrypt 密码哈希 + Session）
+- 多用户认证（Argon2id 密码哈希 + Session）
 - 实时日志流（Server-Sent Events）
 - 作业与运行管理
 - 定时触发器管理（启用/禁用）
@@ -79,7 +79,7 @@
 | 任务队列 | flume |
 | 制品存储 | aws-sdk-s3 |
 | CLI | clap |
-| 认证 | bcrypt |
+| 认证 | Argon2id (argon2) |
 | 定时调度 | tokio-cron-scheduler |
 | 日志 | tracing + tracing-appender |
 | 指标 | prometheus-client |
@@ -356,7 +356,7 @@ POST /api/webhooks/:source
 │  └──────────┘ └──────────┘ └──────────┘ └────────────┘   │
 │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌────────────┐   │
 │  │ archive/ │ │ trigger/ │ │  vcs/    │ │   auth/    │   │
-│  │          │ │ scheduler│ │  (Git)   │ │  (bcrypt)  │   │
+│  │          │ │ scheduler│ │  (Git)   │ │ (Argon2id) │   │
 │  └──────────┘ └──────────┘ └──────────┘ └────────────┘   │
 └─────────────────────┬────────────────────────────────────┘
                       │
@@ -409,7 +409,7 @@ rucicd/
 │       ├── storage.rs        # 存储抽象 (local/S3)
 │       ├── rpc.rs            # RPC 服务端
 │       ├── trigger.rs        # Cron 调度器
-│       ├── auth.rs           # 认证服务 (bcrypt)
+│       ├── auth.rs           # 认证服务 (Argon2id)
 │       ├── metrics.rs        # Prometheus 指标
 │       ├── archive.rs        # 作业归档
 │       ├── vcs.rs            # VCS/Git 操作

@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Web UI**: Modern interface with Tailwind CSS dark theme
-  - Multi-user authentication (session-based with bcrypt)
+  - Multi-user authentication (session-based with Argon2id)
   - Real-time log streaming via Server-Sent Events (SSE)
   - Job and Run management pages
   - Trigger management (enable/disable scheduled triggers)

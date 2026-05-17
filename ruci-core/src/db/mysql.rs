@@ -515,6 +515,17 @@ impl UserRepository for MysqlRepository {
 
         Ok(rows.into_iter().map(|r| r.into()).collect())
     }
+
+    async fn update_password(&self, user_id: &str, new_password_hash: &str) -> Result<()> {
+        sqlx::query("UPDATE users SET password_hash = ? WHERE id = ?")
+            .bind(new_password_hash)
+            .bind(user_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DbError::Query(e.to_string()))?;
+
+        Ok(())
+    }
 }
 
 #[derive(FromRow)]
