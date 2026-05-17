@@ -267,7 +267,7 @@ impl RuciRpc for RuciRpcImpl {
 
     async fn delete_job(self, _: Context, job_id: String) -> bool {
         // Clean up artifact files from storage before DB cascade delete
-        match self.db.list_runs_by_job(&job_id).await {
+        let runs = match self.db.list_runs_by_job(&job_id).await {
             Ok(runs) => {
                 for run in &runs {
                     match self.db.list_artifacts(&run.id).await {
@@ -291,9 +291,38 @@ impl RuciRpc for RuciRpcImpl {
                         }
                     }
                 }
+                runs
             }
             Err(e) => {
                 tracing::warn!("Failed to list runs for job {}: {}", job_id, e);
+                Vec::new()
+            }
+        };
+
+        // Clean up archive files for each run
+        for run in &runs {
+            let archive_path =
+                format!("{}/{}.tar", self.config.paths.archive_dir, run.id);
+            if let Err(e) = tokio::fs::remove_file(&archive_path).await {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    tracing::warn!("Failed to delete archive {}: {}", archive_path, e);
+                }
+            }
+        }
+
+        // Clean up run working directories
+        let run_job_dir = format!("{}/{}", self.config.paths.run_dir, job_id);
+        if let Err(e) = tokio::fs::remove_dir_all(&run_job_dir).await {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                tracing::warn!("Failed to delete run directory {}: {}", run_job_dir, e);
+            }
+        }
+
+        // Clean up job YAML file
+        let job_path = format!("{}/{}.yaml", self.config.paths.jobs_dir, job_id);
+        if let Err(e) = tokio::fs::remove_file(&job_path).await {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                tracing::warn!("Failed to delete job file {}: {}", job_path, e);
             }
         }
 
