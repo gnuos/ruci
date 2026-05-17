@@ -5,10 +5,10 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::exit;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use axum::{extract::State, http::StatusCode, response::Json, routing::get, routing::post, Router};
+use axum::{Router, extract::State, http::StatusCode, response::Json, routing::get, routing::post};
 use clap::Parser;
 use prometheus_client::encoding::text::encode;
 use tokio::signal::unix::SignalKind;
@@ -16,11 +16,11 @@ use tokio::sync::{Mutex, Semaphore};
 use tower_http::cors::{Any, CorsLayer};
 
 use ruci_core::{
+    AppContext,
     config::Config,
     executor::{BashExecutor, ExecutionContext, Executor, Job},
     rpc::RpcServer,
     vcs::{self, GitOperations},
-    AppContext,
 };
 
 mod web;
@@ -408,6 +408,12 @@ async fn run_server(config: Config, socket_path: PathBuf) -> anyhow::Result<bool
                 .route("/ui/webhooks", get(handlers::webhooks_page))
                 .route("/ui/password", get(handlers::change_password_page))
                 .route("/ui/password", post(handlers::change_password_handler))
+                .route("/ui/tokens", get(handlers::tokens_page))
+                .route("/api/tokens/create", post(handlers::token_create_handler))
+                .route(
+                    "/api/tokens/:token_id/delete",
+                    post(handlers::token_delete_handler),
+                )
                 .route(
                     "/api/triggers/:name/enable",
                     post(handlers::trigger_enable_handler),
@@ -775,7 +781,7 @@ async fn wait_shutdown_signal() -> ShutdownReason {
 }
 
 fn init_logging(config: &ruci_core::config::LoggingConfig) {
-    use tracing_subscriber::{fmt, layer::SubscriberExt, prelude::*, EnvFilter};
+    use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, prelude::*};
 
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.level));

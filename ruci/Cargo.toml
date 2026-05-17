@@ -12,6 +12,12 @@ description.workspace = true
 name = "ruci"
 path = "src/main.rs"
 
+[features]
+default = []
+s3 = ["ruci-core/s3"]
+postgres = ["ruci-core/postgres"]
+mysql = ["ruci-core/mysql"]
+
 [dependencies]
 # Internal
 ruci-protocol = { workspace = true }
@@ -24,6 +30,11 @@ futures.workspace = true
 # CLI
 clap = { workspace = true }
 clap_complete = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+yaml_serde = { workspace = true }
 
 # Logging
 tracing = { workspace = true }

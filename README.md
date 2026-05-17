@@ -2,7 +2,7 @@
 
 这是一个使用 Rust 编写的轻量级CI/CD系统，提供 Web UI、REST API 和 CLI 客户端。为的是做一个 [Laminar](https://github.com/ohwgiles/laminar) 的替代品。
 
-**本项目通过 MiniMax-M2.7 和 MiMo-V2-Pro 模型设计并实现了全部的功能**
+**本项目通过 MiniMax-M2.7 和 MiMo-V2-Pro 模型设计并实现了主要的功能**
 
 ## 目录
 
@@ -56,7 +56,7 @@
 - **定时触发器** — Cron 表达式调度
 - **Webhook 触发器** — GitHub/GitLab/Gogs，支持 HMAC 签名验证
 - **VCS 集成** — 自动 Git 克隆/检出，凭据管理
-- **制品存储** — 本地文件系统或 S3/MinIO
+- **制品存储** — 本地文件系统或 S3/MinIO/RustFS
 - **作业归档** — tar 归档 + 定期清理
 - **优雅关闭** — 等待运行中作业完成，超时强制终止
 - **队列恢复** — 重启后自动恢复队列中的作业
@@ -77,7 +77,7 @@
 | Web 框架 | axum |
 | 数据库 | sqlx (SQLite / PostgreSQL / MySQL) |
 | 任务队列 | flume |
-| 制品存储 | aws-sdk-s3 |
+| 制品存储 | rusty-s3 |
 | CLI | clap |
 | 认证 | Argon2id (argon2) |
 | 定时调度 | tokio-cron-scheduler |
@@ -96,8 +96,9 @@
 ### 构建
 
 ```bash
-make build          # Release 构建
+make build          # Release 构建（默认使用sqlite数据库和本地制品库）
 make build-dev      # Dev 构建（调试用）
+make build-full     # 启用s3, pgsql, mysql的支持
 ```
 
 ### 运行
@@ -188,7 +189,7 @@ database:
 
 # 制品存储
 storage:
-  type: "local"             # "local" 或 "rustfs" (S3)
+  type: "local"             # "local" 或 "rustfs" 或 "minio" 或 "s3"
   # type: "rustfs"
   # endpoint: "http://localhost:9000"
   # bucket: "ruci-artifacts"
@@ -198,10 +199,10 @@ storage:
 # 路径配置
 paths:
   db_dir: "/var/lib/ruci/db"
-  jobs_dir: "/var/lib/ruci/jobs"
-  run_dir: "/var/lib/ruci/run"
-  archive_dir: "/var/lib/ruci/archive"
   log_dir: "/var/log/ruci"
+  run_dir: "/var/lib/ruci/run"
+  jobs_dir: "/var/lib/ruci/jobs"
+  archive_dir: "/var/lib/ruci/archive"
 
 # Context 资源限制
 contexts:

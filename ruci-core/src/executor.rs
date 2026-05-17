@@ -10,8 +10,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
-use tokio::sync::{watch, Mutex};
-use tokio::time::{timeout, Duration};
+use tokio::sync::{Mutex, watch};
+use tokio::time::{Duration, timeout};
 
 use crate::config::{Config, ContextConfig};
 use crate::error::{Error, ExecutorError, Result};
@@ -477,7 +477,7 @@ steps:
         let job = Job::parse(yaml).expect("Failed to parse job");
         assert_eq!(job.name, "test-job");
         assert_eq!(job.context, "default");
-        assert_eq!(job.timeout, 3600);
+        assert_eq!(job.timeout, 600);
         assert_eq!(job.steps.len(), 2);
         assert_eq!(job.steps[0].name, "build");
         assert_eq!(job.steps[1].command, "echo world");
@@ -509,7 +509,7 @@ steps:
 "#;
         let job = Job::parse(yaml).expect("Failed to parse job");
         assert_eq!(job.context, "default");
-        assert_eq!(job.timeout, 3600);
+        assert_eq!(job.timeout, 1800);
         assert!(job.env.is_empty());
     }
 

@@ -274,6 +274,19 @@ pub trait VcsCredentialRepository: Send + Sync {
     async fn delete_credential(&self, id: &str) -> Result<()>;
 }
 
+/// API Token information
+#[derive(Debug, Clone)]
+pub struct ApiTokenInfo {
+    pub id: i64,
+    pub name: String,
+    pub token_hash: String,
+    pub permissions: String,
+    pub created_at: String,
+    pub expires_at: Option<String>,
+    pub last_used: Option<String>,
+    pub created_by: String,
+}
+
 /// Session information for persistence
 #[derive(Debug, Clone)]
 pub struct SessionInfo {
@@ -300,6 +313,35 @@ pub trait SessionRepository: Send + Sync {
     async fn delete_expired_sessions(&self) -> Result<u64>;
 }
 
+/// Repository trait for API Token operations
+#[async_trait]
+pub trait ApiTokenRepository: Send + Sync {
+    /// Insert a new API token (stores hash, not plaintext)
+    async fn insert_token(
+        &self,
+        name: &str,
+        token_hash: &str,
+        permissions: &str,
+        expires_at: Option<&str>,
+        created_by: &str,
+    ) -> Result<i64>;
+
+    /// Get a token by its hash
+    async fn get_token_by_hash(&self, token_hash: &str) -> Result<Option<ApiTokenInfo>>;
+
+    /// List all tokens
+    async fn list_tokens(&self) -> Result<Vec<ApiTokenInfo>>;
+
+    /// Update last used timestamp
+    async fn update_token_last_used(&self, token_id: i64) -> Result<()>;
+
+    /// Delete a token by ID
+    async fn delete_token(&self, token_id: i64) -> Result<()>;
+
+    /// Delete expired tokens
+    async fn delete_expired_tokens(&self) -> Result<u64>;
+}
+
 /// Combined repository for all entities
 #[async_trait]
 pub trait Repository:
@@ -311,6 +353,7 @@ pub trait Repository:
     + WebhookRepository
     + VcsCredentialRepository
     + SessionRepository
+    + ApiTokenRepository
     + Send
     + Sync
 {

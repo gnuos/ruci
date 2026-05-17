@@ -7,7 +7,9 @@ use std::collections::HashMap;
 use std::fmt;
 
 pub mod protocol_types {
-    pub use super::{ArtifactInfo, JobInfo, RunInfo, RunStatus};
+    pub use super::{
+        ArtifactInfo, AuthResponse, GenerateTokenResponse, JobInfo, RunInfo, RunStatus, TokenInfo,
+    };
 }
 
 /// Unique identifier for a job
@@ -21,6 +23,32 @@ pub type ArtifactId = String;
 
 /// Build number for a job
 pub type BuildNum = u64;
+
+/// Response for authentication
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthResponse {
+    pub ok: bool,
+    pub permissions: Vec<String>,
+    pub error_message: Option<String>,
+}
+
+impl AuthResponse {
+    pub fn success(permissions: Vec<String>) -> Self {
+        Self {
+            ok: true,
+            permissions,
+            error_message: None,
+        }
+    }
+
+    pub fn error(message: impl Into<String>) -> Self {
+        Self {
+            ok: false,
+            permissions: Vec::new(),
+            error_message: Some(message.into()),
+        }
+    }
+}
 
 /// Response for queue operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -159,9 +187,34 @@ pub struct TriggerInfo {
     pub enabled: bool,
 }
 
+/// Information about an API token (without hash)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenInfo {
+    pub id: i64,
+    pub name: String,
+    pub token_hash: String,
+    pub permissions: String,
+    pub created_at: String,
+    pub expires_at: Option<String>,
+    pub last_used: Option<String>,
+    pub created_by: String,
+}
+
+/// Response for token generation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GenerateTokenResponse {
+    pub ok: bool,
+    pub token_id: i64,
+    pub token: String,
+    pub error_message: Option<String>,
+}
+
 /// Ruci RPC Service Definition
 #[tarpc::service]
 pub trait RuciRpc {
+    // Authentication
+    async fn authenticate(token: String) -> AuthResponse;
+
     // Job Management
     async fn queue_job(job_id: JobId, params: HashMap<String, String>) -> QueueResponse;
     async fn abort_job(run_id: RunId);
@@ -197,6 +250,11 @@ pub trait RuciRpc {
 
     // Daemon Control
     async fn status() -> DaemonStatus;
+
+    // Token Management
+    async fn generate_token(name: String, permissions: String) -> GenerateTokenResponse;
+    async fn list_tokens() -> Vec<TokenInfo>;
+    async fn revoke_token(token_id: i64) -> bool;
 }
 
 /// Daemon status information
@@ -222,6 +280,7 @@ pub enum ErrorCode {
     JobRunning = 0x06,
     StorageError = 0x07,
     DatabaseError = 0x08,
+    Unauthorized = 0x09,
     Internal = 0xFF,
 }
 
@@ -236,6 +295,7 @@ impl fmt::Display for ErrorCode {
             ErrorCode::JobRunning => write!(f, "JOB_RUNNING"),
             ErrorCode::StorageError => write!(f, "STORAGE_ERROR"),
             ErrorCode::DatabaseError => write!(f, "DATABASE_ERROR"),
+            ErrorCode::Unauthorized => write!(f, "UNAUTHORIZED"),
             ErrorCode::Internal => write!(f, "INTERNAL"),
         }
     }

@@ -10,9 +10,10 @@ use crate::error::{DbError, Result};
 use ruci_protocol::{ArtifactInfo, JobInfo, RunInfo, RunStatus};
 
 use super::repository::{
-    ArtifactRepository, JobRepository, Repository, RunRepository, SessionInfo, SessionRepository,
-    TriggerInfo, TriggerRepository, UserInfo, UserRepository, VcsCredentialInfo,
-    VcsCredentialRepository, WebhookFilter, WebhookRepository, WebhookSource, WebhookTriggerInfo,
+    ApiTokenInfo, ApiTokenRepository, ArtifactRepository, JobRepository, Repository, RunRepository,
+    SessionInfo, SessionRepository, TriggerInfo, TriggerRepository, UserInfo, UserRepository,
+    VcsCredentialInfo, VcsCredentialRepository, WebhookFilter, WebhookRepository, WebhookSource,
+    WebhookTriggerInfo,
 };
 
 /// MySQL repository implementation
@@ -124,6 +125,19 @@ impl MysqlRepository {
                 created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 expires_at DATETIME NOT NULL,
                 INDEX idx_sessions_expires_at (expires_at)
+            );
+
+            CREATE TABLE IF NOT EXISTS api_tokens (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                name VARCHAR(255) NOT NULL,
+                token_hash VARCHAR(255) NOT NULL UNIQUE,
+                permissions TEXT NOT NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                expires_at DATETIME,
+                last_used DATETIME,
+                created_by VARCHAR(255) NOT NULL,
+                INDEX idx_api_tokens_hash (token_hash),
+                INDEX idx_api_tokens_expires (expires_at)
             );
             "#,
         )
@@ -803,7 +817,7 @@ impl VcsCredentialRepository for MysqlRepository {
                     _ => {
                         return Err(
                             DbError::Query(format!("Unknown vcs_type: {}", r.vcs_type)).into()
-                        )
+                        );
                     }
                 };
                 Ok(Some(VcsCredentialInfo {
@@ -836,7 +850,7 @@ impl VcsCredentialRepository for MysqlRepository {
                     _ => {
                         return Err(
                             DbError::Query(format!("Unknown vcs_type: {}", r.vcs_type)).into()
-                        )
+                        );
                     }
                 };
                 Ok(VcsCredentialInfo {
@@ -924,6 +938,107 @@ impl SessionRepository for MysqlRepository {
             .execute(&self.pool)
             .await
             .map_err(|e| DbError::Query(e.to_string()))?;
+
+        Ok(result.rows_affected())
+    }
+}
+
+#[async_trait]
+impl ApiTokenRepository for MysqlRepository {
+    async fn insert_token(
+        &self,
+        name: &str,
+        token_hash: &str,
+        permissions: &str,
+        expires_at: Option<&str>,
+        created_by: &str,
+    ) -> Result<i64> {
+        let result = sqlx::query(
+            "INSERT INTO api_tokens (name, token_hash, permissions, expires_at, created_by) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(name)
+        .bind(token_hash)
+        .bind(permissions)
+        .bind(expires_at)
+        .bind(created_by)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError::Query(e.to_string()))?;
+
+        Ok(result.last_insert_id() as i64)
+    }
+
+    async fn get_token_by_hash(&self, token_hash: &str) -> Result<Option<ApiTokenInfo>> {
+        let row: Option<(i64, String, String, String, String, Option<String>, Option<String>, String)> = sqlx::query_as(
+            "SELECT id, name, token_hash, permissions, CAST(created_at AS CHAR), CAST(expires_at AS CHAR), CAST(last_used AS CHAR), created_by FROM api_tokens WHERE token_hash = ?",
+        )
+        .bind(token_hash)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| DbError::Query(e.to_string()))?;
+
+        Ok(row.map(|r| ApiTokenInfo {
+            id: r.0,
+            name: r.1,
+            token_hash: r.2,
+            permissions: r.3,
+            created_at: r.4,
+            expires_at: r.5,
+            last_used: r.6,
+            created_by: r.7,
+        }))
+    }
+
+    async fn list_tokens(&self) -> Result<Vec<ApiTokenInfo>> {
+        let rows: Vec<(i64, String, String, String, String, Option<String>, Option<String>, String)> = sqlx::query_as(
+            "SELECT id, name, token_hash, permissions, CAST(created_at AS CHAR), CAST(expires_at AS CHAR), CAST(last_used AS CHAR), created_by FROM api_tokens ORDER BY created_at DESC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DbError::Query(e.to_string()))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| ApiTokenInfo {
+                id: r.0,
+                name: r.1,
+                token_hash: r.2,
+                permissions: r.3,
+                created_at: r.4,
+                expires_at: r.5,
+                last_used: r.6,
+                created_by: r.7,
+            })
+            .collect())
+    }
+
+    async fn update_token_last_used(&self, token_id: i64) -> Result<()> {
+        sqlx::query("UPDATE api_tokens SET last_used = NOW() WHERE id = ?")
+            .bind(token_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DbError::Query(e.to_string()))?;
+
+        Ok(())
+    }
+
+    async fn delete_token(&self, token_id: i64) -> Result<()> {
+        sqlx::query("DELETE FROM api_tokens WHERE id = ?")
+            .bind(token_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DbError::Query(e.to_string()))?;
+
+        Ok(())
+    }
+
+    async fn delete_expired_tokens(&self) -> Result<u64> {
+        let result = sqlx::query(
+            "DELETE FROM api_tokens WHERE expires_at IS NOT NULL AND expires_at < NOW()",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError::Query(e.to_string()))?;
 
         Ok(result.rows_affected())
     }

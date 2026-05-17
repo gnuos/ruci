@@ -144,7 +144,7 @@ pub enum VcsEventType {
 pub trait VcsOperations: Send + Sync {
     /// Clone repository
     async fn clone(&self, url: &str, branch: &str, work_dir: &Path, submodules: bool)
-        -> Result<()>;
+    -> Result<()>;
 
     /// Fetch updates
     async fn fetch(&self, url: &str, branch: &str, work_dir: &Path) -> Result<()>;

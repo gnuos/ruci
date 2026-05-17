@@ -22,6 +22,7 @@ pub struct Config {
     pub archive: ArchiveConfig,
     pub cleanup: CleanupConfig,
     pub web: WebConfig,
+    pub security: SecurityConfig,
     /// Path to the loaded config file (set after loading)
     #[serde(skip)]
     pub config_path: Option<PathBuf>,
@@ -40,6 +41,7 @@ impl Default for Config {
             archive: ArchiveConfig::default(),
             cleanup: CleanupConfig::default(),
             web: WebConfig::default(),
+            security: SecurityConfig::default(),
             config_path: None,
         }
     }
@@ -166,7 +168,7 @@ impl ContextConfig {
             "default".to_string(),
             ContextConfig {
                 max_parallel: 4,
-                timeout: 3600,
+                timeout: 1800,
                 work_dir: "/tmp".to_string(),
             },
         );
@@ -178,7 +180,7 @@ impl Default for ContextConfig {
     fn default() -> Self {
         Self {
             max_parallel: 4,
-            timeout: 3600,
+            timeout: 1800,
             work_dir: "/tmp".to_string(),
         }
     }
@@ -286,6 +288,31 @@ impl Default for WebConfig {
     }
 }
 
+/// Security configuration for RPC authentication
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct SecurityConfig {
+    /// RPC authentication token (supports ${ENV_VAR} syntax)
+    /// If None, authentication is disabled (backward compatible)
+    pub rpc_token: Option<String>,
+}
+
+/// Generate a random API token in the format: ruci_<48 random chars>
+pub fn generate_api_token() -> String {
+    use rand_core::RngCore;
+    let mut bytes = [0u8; 36];
+    rand_core::OsRng.fill_bytes(&mut bytes);
+    let encoded = base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, bytes);
+    format!("ruci_{}", encoded)
+}
+
+/// Compute SHA-256 hash of a token (hex-encoded)
+pub fn hash_token(token: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(token.as_bytes());
+    hex::encode(hasher.finalize())
+}
+
 impl ServerConfig {
     /// Get the socket path for Unix socket mode
     pub fn socket_path(&self) -> PathBuf {
@@ -382,6 +409,47 @@ impl Config {
     /// PID file path
     pub fn pid_file(&self) -> PathBuf {
         PathBuf::from(&self.paths.run_dir).join("rucid.pid")
+    }
+
+    /// Get the resolved RPC token (with env var expansion)
+    pub fn resolved_rpc_token(&self) -> Option<String> {
+        self.security
+            .rpc_token
+            .as_ref()
+            .map(|t| self.resolve_env(t))
+            .filter(|t| !t.is_empty())
+    }
+
+    /// Update the config file with a new rpc_token value
+    pub fn write_rpc_token_to_config(&self, token: &str) -> Result<()> {
+        if let Some(ref path) = self.config_path {
+            let content = std::fs::read_to_string(path).map_err(|e| ConfigError::ReadError {
+                path: path.display().to_string(),
+                source: e,
+            })?;
+
+            let mut config: serde_json::Value =
+                yaml_serde::from_str(&content).map_err(|e| ConfigError::ParseError {
+                    path: path.display().to_string(),
+                    source: e,
+                })?;
+
+            // Ensure security section exists
+            if config.get("security").is_none() {
+                config["security"] = serde_json::json!({});
+            }
+            config["security"]["rpc_token"] = serde_json::Value::String(token.to_string());
+
+            let yaml_output = yaml_serde::to_string(&config).map_err(|e| {
+                ConfigError::InvalidValue(format!("Failed to serialize config: {}", e))
+            })?;
+
+            std::fs::write(path, yaml_output).map_err(|e| ConfigError::ReadError {
+                path: path.display().to_string(),
+                source: e,
+            })?;
+        }
+        Ok(())
     }
 
     /// Resolve environment variables in a string

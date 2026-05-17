@@ -3,7 +3,7 @@
 //! Uses sqlx for async database operations with SQLite backend.
 
 use async_trait::async_trait;
-use sqlx::{sqlite::SqliteConnectOptions, FromRow, Pool, Sqlite, SqlitePool};
+use sqlx::{FromRow, Pool, Sqlite, SqlitePool, sqlite::SqliteConnectOptions};
 use std::collections::HashMap;
 use std::str::FromStr;
 
@@ -11,9 +11,10 @@ use crate::error::{DbError, Result};
 use ruci_protocol::{ArtifactInfo, JobInfo, RunInfo, RunStatus};
 
 use super::repository::{
-    ArtifactRepository, JobRepository, Repository, RunRepository, SessionInfo, SessionRepository,
-    TriggerInfo, TriggerRepository, UserInfo, UserRepository, VcsCredentialInfo,
-    VcsCredentialRepository, WebhookFilter, WebhookRepository, WebhookSource, WebhookTriggerInfo,
+    ApiTokenInfo, ApiTokenRepository, ArtifactRepository, JobRepository, Repository, RunRepository,
+    SessionInfo, SessionRepository, TriggerInfo, TriggerRepository, UserInfo, UserRepository,
+    VcsCredentialInfo, VcsCredentialRepository, WebhookFilter, WebhookRepository, WebhookSource,
+    WebhookTriggerInfo,
 };
 
 /// SQLite repository implementation
@@ -131,6 +132,20 @@ impl SqliteRepository {
             );
 
             CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
+
+            CREATE TABLE IF NOT EXISTS api_tokens (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                token_hash TEXT NOT NULL UNIQUE,
+                permissions TEXT NOT NULL DEFAULT 'read,write',
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                expires_at TEXT,
+                last_used TEXT,
+                created_by TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_api_tokens_hash ON api_tokens(token_hash);
+            CREATE INDEX IF NOT EXISTS idx_api_tokens_expires ON api_tokens(expires_at);
             "#,
         )
         .execute(&self.pool)
@@ -809,7 +824,7 @@ impl VcsCredentialRepository for SqliteRepository {
                     _ => {
                         return Err(
                             DbError::Query(format!("Unknown vcs_type: {}", r.vcs_type)).into()
-                        )
+                        );
                     }
                 };
                 Ok(Some(VcsCredentialInfo {
@@ -842,7 +857,7 @@ impl VcsCredentialRepository for SqliteRepository {
                     _ => {
                         return Err(
                             DbError::Query(format!("Unknown vcs_type: {}", r.vcs_type)).into()
-                        )
+                        );
                     }
                 };
                 Ok(VcsCredentialInfo {
@@ -919,6 +934,120 @@ impl SessionRepository for SqliteRepository {
             .execute(&self.pool)
             .await
             .map_err(|e| DbError::Query(e.to_string()))?;
+
+        Ok(result.rows_affected())
+    }
+}
+
+#[derive(FromRow)]
+#[allow(dead_code)]
+struct ApiTokenRow {
+    id: i64,
+    name: String,
+    token_hash: String,
+    permissions: String,
+    created_at: String,
+    expires_at: Option<String>,
+    last_used: Option<String>,
+    created_by: String,
+}
+
+#[async_trait]
+impl ApiTokenRepository for SqliteRepository {
+    async fn insert_token(
+        &self,
+        name: &str,
+        token_hash: &str,
+        permissions: &str,
+        expires_at: Option<&str>,
+        created_by: &str,
+    ) -> Result<i64> {
+        let result = sqlx::query(
+            "INSERT INTO api_tokens (name, token_hash, permissions, expires_at, created_by) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(name)
+        .bind(token_hash)
+        .bind(permissions)
+        .bind(expires_at)
+        .bind(created_by)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError::Query(e.to_string()))?;
+
+        Ok(result.last_insert_rowid())
+    }
+
+    async fn get_token_by_hash(&self, token_hash: &str) -> Result<Option<ApiTokenInfo>> {
+        let row: Option<ApiTokenRow> = sqlx::query_as(
+            "SELECT id, name, token_hash, permissions, created_at, expires_at, last_used, created_by FROM api_tokens WHERE token_hash = ?",
+        )
+        .bind(token_hash)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| DbError::Query(e.to_string()))?;
+
+        Ok(row.map(|r| ApiTokenInfo {
+            id: r.id,
+            name: r.name,
+            token_hash: r.token_hash,
+            permissions: r.permissions,
+            created_at: r.created_at,
+            expires_at: r.expires_at,
+            last_used: r.last_used,
+            created_by: r.created_by,
+        }))
+    }
+
+    async fn list_tokens(&self) -> Result<Vec<ApiTokenInfo>> {
+        let rows: Vec<ApiTokenRow> = sqlx::query_as(
+            "SELECT id, name, token_hash, permissions, created_at, expires_at, last_used, created_by FROM api_tokens ORDER BY created_at DESC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DbError::Query(e.to_string()))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| ApiTokenInfo {
+                id: r.id,
+                name: r.name,
+                token_hash: r.token_hash,
+                permissions: r.permissions,
+                created_at: r.created_at,
+                expires_at: r.expires_at,
+                last_used: r.last_used,
+                created_by: r.created_by,
+            })
+            .collect())
+    }
+
+    async fn update_token_last_used(&self, token_id: i64) -> Result<()> {
+        sqlx::query("UPDATE api_tokens SET last_used = datetime('now') WHERE id = ?")
+            .bind(token_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DbError::Query(e.to_string()))?;
+
+        Ok(())
+    }
+
+    async fn delete_token(&self, token_id: i64) -> Result<()> {
+        sqlx::query("DELETE FROM api_tokens WHERE id = ?")
+            .bind(token_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DbError::Query(e.to_string()))?;
+
+        Ok(())
+    }
+
+    async fn delete_expired_tokens(&self) -> Result<u64> {
+        let result = sqlx::query(
+            "DELETE FROM api_tokens WHERE expires_at IS NOT NULL AND expires_at < datetime('now')",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError::Query(e.to_string()))?;
 
         Ok(result.rows_affected())
     }

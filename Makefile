@@ -1,7 +1,7 @@
 # Ruci Makefile
 # Simple CI/CD workflow for Ruci project
 
-.PHONY: all build check test lint clean run stop status logs help
+.PHONY: all build fmt check test clippy clean install help
 
 # Default target
 all: build
@@ -9,6 +9,13 @@ all: build
 ## Build
 build:
 	cargo build --release
+	@mkdir -p bin
+	@cp target/release/rucid bin/ 2>/dev/null || cp target/release/rucid bin/
+	@cp target/release/ruci bin/ 2>/dev/null || cp target/release/ruci bin/
+	@echo "Build complete: bin/rucid, bin/ruci"
+
+build-full:
+	cargo build --release --features full
 	@mkdir -p bin
 	@cp target/release/rucid bin/ 2>/dev/null || cp target/release/rucid bin/
 	@cp target/release/ruci bin/ 2>/dev/null || cp target/release/ruci bin/
@@ -30,11 +37,6 @@ test:
 	cargo test
 
 test-all: test fmt-check clippy
-
-## MySQL Tests (requires MySQL instance)
-test-mysql:
-	MYSQL_URL="mysql://root:password@localhost/test_ruci" cargo test -p ruci-core -- mysql
-	@echo "Note: MySQL tests require a running MySQL instance"
 
 ## Lint
 fmt:
@@ -70,11 +72,11 @@ help:
 	@echo ""
 	@echo "Targets:"
 	@echo "  build         - Release build (output to bin/)"
+	@echo "  build-full    - Release build (full features)"
 	@echo "  build-dev     - Development build"
 	@echo "  check         - Fast type checking (no binary output)"
 	@echo "  test          - Run tests"
 	@echo "  test-all      - Run tests, fmt check, clippy"
-	@echo "  test-mysql    - Run MySQL tests (requires MySQL instance)"
 	@echo "  fmt           - Format code"
 	@echo "  fmt-check     - Check code formatting"
 	@echo "  clippy        - Run clippy linter"

@@ -224,84 +224,107 @@ impl Storage for LocalStorage {
     }
 }
 
-/// AWS S3 / RustFS storage backend
+/// S3-compatible storage backend (RustFS / MinIO / AWS S3)
+///
+/// Uses `rusty-s3` for request signing and `reqwest` for HTTP.
+#[cfg(feature = "s3")]
 pub struct S3Storage {
-    client: aws_sdk_s3::Client,
-    bucket: String,
-    endpoint: Option<String>,
+    bucket: rusty_s3::Bucket,
+    credentials: rusty_s3::Credentials,
+    client: reqwest::Client,
+    endpoint: String,
 }
 
+#[cfg(feature = "s3")]
 impl S3Storage {
     pub async fn new(config: &StorageConfig) -> Result<Self> {
-        use aws_config::BehaviorVersion;
-        use aws_sdk_s3::config::Credentials as S3Credentials;
+        let endpoint_url = config
+            .endpoint
+            .as_deref()
+            .unwrap_or("http://localhost:9000/");
 
-        let mut cfg = aws_config::defaults(BehaviorVersion::latest());
+        let bucket_name = config
+            .bucket
+            .clone()
+            .unwrap_or_else(|| "ruci-artifacts".to_string());
 
-        // Override endpoint for RustFS/MinIO
-        if let Some(endpoint) = &config.endpoint {
-            cfg = cfg.endpoint_url(endpoint);
-        }
+        let region = config.region.clone().unwrap_or_else(|| "cn".to_string());
 
-        // Use configured credentials if provided
-        if let (Some(access_key), Some(secret_key)) = (&config.access_key, &config.secret_key) {
-            let creds =
-                S3Credentials::new(access_key, secret_key, None, None, "static-credentials");
-            cfg = cfg.credentials_provider(creds);
-        }
+        let endpoint: reqwest::Url = endpoint_url.parse().map_err(|e| {
+            StorageError::Local(format!("Invalid S3 endpoint '{}': {}", endpoint_url, e))
+        })?;
 
-        let sdk_cfg = cfg.load().await;
-        let client = aws_sdk_s3::Client::new(&sdk_cfg);
+        // Use path-style for self-hosted (RustFS/MinIO), virtual-host for AWS
+        let url_style = if endpoint_url.contains("amazonaws.com") {
+            rusty_s3::UrlStyle::VirtualHost
+        } else {
+            rusty_s3::UrlStyle::Path
+        };
+
+        let bucket = rusty_s3::Bucket::new(endpoint, url_style, bucket_name, region)
+            .map_err(|e| StorageError::Local(format!("Invalid S3 bucket config: {}", e)))?;
+
+        let access_key = config.access_key.as_deref().unwrap_or("");
+        let secret_key = config.secret_key.as_deref().unwrap_or("");
+        let credentials = rusty_s3::Credentials::new(access_key, secret_key);
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(300))
+            .build()
+            .map_err(|e| StorageError::Local(format!("Failed to create HTTP client: {}", e)))?;
 
         Ok(Self {
+            bucket,
+            credentials,
             client,
-            bucket: config
-                .bucket
-                .clone()
-                .unwrap_or_else(|| "ruci-artifacts".to_string()),
-            endpoint: config.endpoint.clone(),
+            endpoint: endpoint_url.to_string(),
         })
     }
 }
 
+#[cfg(feature = "s3")]
 #[async_trait]
 impl Storage for S3Storage {
     async fn upload(&self, key: &str, path: &Path) -> Result<StorageHandle> {
-        use aws_sdk_s3::primitives::ByteStream;
+        use rusty_s3::S3Action;
 
-        tracing::debug!(key=%key, path=%path.display(), bucket=%self.bucket, "Uploading file to S3");
+        tracing::debug!(key=%key, path=%path.display(), bucket=%self.bucket.name(), "Uploading file to S3");
 
-        let body = ByteStream::from_path(path).await.map_err(|e| {
+        let data = std::fs::read(path).map_err(|e| {
             tracing::error!(error=%e, "Failed to read file for S3 upload");
             StorageError::UploadFailed(e.to_string())
         })?;
+        let metadata =
+            std::fs::metadata(path).map_err(|e| StorageError::UploadFailed(e.to_string()))?;
+        let checksum = calculate_checksum(path)?;
 
-        let metadata = match std::fs::metadata(path) {
-            Ok(m) => m,
-            Err(e) => {
-                tracing::error!(error=%e, "Failed to get file metadata");
-                return Err(StorageError::UploadFailed(e.to_string()).into());
-            }
-        };
-        let checksum = match calculate_checksum(path) {
-            Ok(c) => c,
-            Err(e) => return Err(e),
-        };
+        let action = self.bucket.put_object(Some(&self.credentials), key);
+        let url = action.sign(std::time::Duration::from_secs(3600));
 
-        if let Err(e) = self
+        let resp = self
             .client
-            .put_object()
-            .bucket(&self.bucket)
-            .key(key)
-            .body(body)
+            .put(url)
+            .header("content-length", data.len())
+            .body(data)
             .send()
             .await
-        {
-            tracing::error!(error=%e, key=%key, bucket=%self.bucket, "S3 upload failed");
-            return Err(StorageError::UploadFailed(e.to_string()).into());
+            .map_err(|e| {
+                tracing::error!(error=%e, key=%key, "S3 upload request failed");
+                StorageError::UploadFailed(e.to_string())
+            })?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            tracing::error!(status=%status, body=%body, key=%key, "S3 upload failed");
+            return Err(StorageError::UploadFailed(format!(
+                "S3 PUT returned {}: {}",
+                status, body
+            ))
+            .into());
         }
 
-        tracing::info!(key=%key, size=%metadata.len(), checksum=%checksum, bucket=%self.bucket, "File uploaded to S3 successfully");
+        tracing::info!(key=%key, size=%metadata.len(), checksum=%checksum, "File uploaded to S3");
         Ok(StorageHandle {
             key: key.to_string(),
             size: metadata.len(),
@@ -310,66 +333,81 @@ impl Storage for S3Storage {
     }
 
     async fn download(&self, key: &str) -> Result<Vec<u8>> {
-        tracing::debug!(key=%key, bucket=%self.bucket, "Downloading from S3");
-        let resp = self
-            .client
-            .get_object()
-            .bucket(&self.bucket)
-            .key(key)
-            .send()
-            .await
-            .map_err(|e| {
-                tracing::error!(error=%e, key=%key, bucket=%self.bucket, "S3 download failed");
-                StorageError::DownloadFailed(e.to_string())
-            })?;
+        use rusty_s3::S3Action;
 
-        let body = resp.body
-            .collect()
-            .await
-            .map_err(|e| {
-                tracing::error!(error=%e, key=%key, bucket=%self.bucket, "Failed to collect S3 response body");
-                StorageError::DownloadFailed(e.to_string())
-            })?;
+        tracing::debug!(key=%key, bucket=%self.bucket.name(), "Downloading from S3");
 
-        let data = body.to_vec();
-        let size = data.len();
-        tracing::info!(key=%key, size=%size, bucket=%self.bucket, "File downloaded from S3 successfully");
+        let action = self.bucket.get_object(Some(&self.credentials), key);
+        let url = action.sign(std::time::Duration::from_secs(3600));
+
+        let resp = self.client.get(url).send().await.map_err(|e| {
+            tracing::error!(error=%e, key=%key, "S3 download request failed");
+            StorageError::DownloadFailed(e.to_string())
+        })?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            tracing::error!(status=%status, body=%body, key=%key, "S3 download failed");
+            return Err(StorageError::DownloadFailed(format!(
+                "S3 GET returned {}: {}",
+                status, body
+            ))
+            .into());
+        }
+
+        let data = resp
+            .bytes()
+            .await
+            .map_err(|e| StorageError::DownloadFailed(e.to_string()))?
+            .to_vec();
+
+        tracing::info!(key=%key, size=%data.len(), "File downloaded from S3");
         Ok(data)
     }
 
     async fn exists(&self, key: &str) -> bool {
+        use rusty_s3::S3Action;
+
+        let action = self.bucket.head_object(Some(&self.credentials), key);
+        let url = action.sign(std::time::Duration::from_secs(3600));
+
         let exists = self
             .client
-            .head_object()
-            .bucket(&self.bucket)
-            .key(key)
+            .head(url)
             .send()
             .await
-            .is_ok();
-        tracing::debug!(key=%key, bucket=%self.bucket, exists=%exists, "S3 exists check");
+            .map(|r| r.status().is_success())
+            .unwrap_or(false);
+
+        tracing::debug!(key=%key, exists=%exists, "S3 exists check");
         exists
     }
 
     async fn delete(&self, key: &str) -> Result<()> {
-        tracing::debug!(key=%key, bucket=%self.bucket, "Deleting from S3");
-        self.client
-            .delete_object()
-            .bucket(&self.bucket)
-            .key(key)
-            .send()
-            .await
-            .map_err(|e| {
-                tracing::error!(error=%e, key=%key, bucket=%self.bucket, "S3 delete failed");
-                StorageError::Local(e.to_string())
-            })?;
-        tracing::info!(key=%key, bucket=%self.bucket, "File deleted from S3 successfully");
+        use rusty_s3::S3Action;
+
+        tracing::debug!(key=%key, bucket=%self.bucket.name(), "Deleting from S3");
+
+        let action = self.bucket.delete_object(Some(&self.credentials), key);
+        let url = action.sign(std::time::Duration::from_secs(3600));
+
+        let resp = self.client.delete(url).send().await.map_err(|e| {
+            tracing::error!(error=%e, key=%key, "S3 delete request failed");
+            StorageError::Local(e.to_string())
+        })?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            tracing::warn!(status=%status, key=%key, "S3 delete returned non-success");
+        }
+
+        tracing::info!(key=%key, "File deleted from S3");
         Ok(())
     }
 
     fn url(&self, key: &str) -> Option<String> {
-        self.endpoint
-            .as_ref()
-            .map(|ep| format!("{}/{}/{}", ep, self.bucket, key))
+        Some(format!("{}/{}/{}", self.endpoint, self.bucket.name(), key))
     }
 }
 
@@ -381,10 +419,16 @@ pub async fn create_storage(config: &StorageConfig) -> Result<Box<dyn Storage>> 
             let path = config.bucket.as_deref().unwrap_or("/var/lib/ruci/archive");
             Ok(Box::new(LocalStorage::new(path, max_size_mb)))
         }
+        #[cfg(feature = "s3")]
         StorageType::Rustfs | StorageType::Minio | StorageType::S3 => {
             let storage = S3Storage::new(config).await?;
             Ok(Box::new(storage))
         }
+        #[cfg(not(feature = "s3"))]
+        _ => Err(StorageError::Local(
+            "S3/MinIO/RustFS storage requires the 's3' feature to be enabled".to_string(),
+        )
+        .into()),
     }
 }
 
@@ -732,9 +776,10 @@ mod tests {
 
     // ═══════════════════════════════════════════════════════════════
     // S3 Integration Tests (require MinIO or AWS S3)
-    // Run with: cargo test -- --ignored
+    // Run with: cargo test --features s3 -- --ignored
     // ═══════════════════════════════════════════════════════════════
 
+    #[cfg(feature = "s3")]
     fn create_test_s3_config() -> StorageConfig {
         StorageConfig {
             storage_type: StorageType::Rustfs,
@@ -755,6 +800,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "s3")]
     #[ignore = "requires MinIO or AWS S3"]
     async fn test_s3_storage_upload_download() {
         let config = create_test_s3_config();
@@ -787,6 +833,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "s3")]
     #[ignore = "requires MinIO or AWS S3"]
     async fn test_s3_storage_exists() {
         let config = create_test_s3_config();
@@ -820,6 +867,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "s3")]
     #[ignore = "requires MinIO or AWS S3"]
     async fn test_s3_storage_delete() {
         let config = create_test_s3_config();
@@ -858,6 +906,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "s3")]
     #[ignore = "requires MinIO or AWS S3"]
     async fn test_s3_storage_url() {
         let config = create_test_s3_config();
@@ -875,6 +924,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "s3")]
     #[ignore = "requires MinIO or AWS S3"]
     async fn test_s3_storage_nested_path() {
         let config = create_test_s3_config();
@@ -906,6 +956,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "s3")]
     #[ignore = "requires MinIO or AWS S3"]
     async fn test_s3_storage_binary_content() {
         let config = create_test_s3_config();
@@ -937,6 +988,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "s3")]
     #[ignore = "requires MinIO or AWS S3"]
     async fn test_s3_storage_large_file() {
         let config = create_test_s3_config();
@@ -968,6 +1020,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "s3")]
     #[ignore = "requires MinIO or AWS S3"]
     async fn test_s3_storage_overwrite() {
         let config = create_test_s3_config();
@@ -1003,6 +1056,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "s3")]
     #[ignore = "requires MinIO or AWS S3"]
     async fn test_s3_storage_unicode_content() {
         let config = create_test_s3_config();
@@ -1033,6 +1087,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "s3")]
     #[ignore = "requires MinIO or AWS S3"]
     async fn test_s3_storage_not_found() {
         let config = create_test_s3_config();

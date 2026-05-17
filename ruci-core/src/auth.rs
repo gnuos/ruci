@@ -53,7 +53,7 @@ impl AuthService {
     /// Hash a password using Argon2id
     pub fn hash_password(password: &str) -> crate::error::Result<String> {
         use argon2::Argon2;
-        use password_hash::{rand_core::OsRng, PasswordHasher, SaltString};
+        use password_hash::{PasswordHasher, SaltString, rand_core::OsRng};
 
         let salt = SaltString::generate(&mut OsRng);
         let argon2 = Argon2::new(

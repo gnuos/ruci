@@ -5,15 +5,16 @@
 use std::sync::Arc;
 
 use axum::{
+    Form,
     body::Body,
     extract::{Query, State},
-    http::{header, HeaderMap, HeaderValue, StatusCode},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{Html, IntoResponse, Response},
-    Form,
 };
 use serde::Deserialize;
 
 use crate::AppContext;
+use ruci_core::config::{generate_api_token, hash_token};
 use ruci_core::db::{TriggerInfo, WebhookEvent, WebhookFilter, WebhookSource, WebhookTriggerInfo};
 
 /// Log and unwrap a DB result, returning default on error
@@ -91,6 +92,7 @@ fn base_html(title: &str, content: &str) -> String {
                 <a href="/ui/queue" class="hover:text-blue-400">Queue</a>
                 <a href="/ui/triggers" class="hover:text-blue-400">Triggers</a>
                 <a href="/ui/webhooks" class="hover:text-blue-400">Webhooks</a>
+                <a href="/ui/tokens" class="hover:text-blue-400">Tokens</a>
                 <a href="/ui/password" class="hover:text-blue-400">Password</a>
                 <form action="/ui/logout" method="post" class="inline">
                     <button type="submit" class="hover:text-red-400">Logout</button>
@@ -821,7 +823,10 @@ pub async fn queue_page(State(state): State<AppState>, cookies: HeaderMap) -> Re
         if running.is_empty() {
             String::from("<p class='text-gray-500 py-4'>No running jobs</p>")
         } else {
-            format!("<table class='w-full'><thead><tr><th class='text-left text-sm text-gray-400 pb-2'>Run ID</th><th class='text-left text-sm text-gray-400 pb-2'>Job</th><th class='text-left text-sm text-gray-400 pb-2'>Build</th><th class='text-left text-sm text-gray-400 pb-2'>Started</th><th></th></tr></thead><tbody>{}</tbody></table>", running_rows)
+            format!(
+                "<table class='w-full'><thead><tr><th class='text-left text-sm text-gray-400 pb-2'>Run ID</th><th class='text-left text-sm text-gray-400 pb-2'>Job</th><th class='text-left text-sm text-gray-400 pb-2'>Build</th><th class='text-left text-sm text-gray-400 pb-2'>Started</th><th></th></tr></thead><tbody>{}</tbody></table>",
+                running_rows
+            )
         }
     );
 
@@ -1689,6 +1694,217 @@ pub async fn change_password_handler(
                     <a href="/ui/password" class="text-blue-400 hover:underline">Try again</a>
                 </div>
                 "#,
+                e
+            ),
+        ))
+        .into_response(),
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Token management handlers
+// ─────────────────────────────────────────────────────────────────
+
+/// Token management page
+pub async fn tokens_page(State(state): State<AppState>, cookies: HeaderMap) -> Response {
+    if get_session_from_cookies(&state.context.auth, &cookies).is_none() {
+        return axum::response::Redirect::to("/ui/login").into_response();
+    }
+
+    let tokens = state.context.db.list_tokens().await.unwrap_or_default();
+
+    let rows: String = if tokens.is_empty() {
+        r#"<tr><td colspan="6" class="text-center py-8 text-gray-500">No API tokens configured</td></tr>"#.to_string()
+    } else {
+        tokens
+            .iter()
+            .map(|t| {
+                let token_display = {
+                    let h = &t.token_hash;
+                    if h.len() > 12 {
+                        format!("{}...{}", &h[..8], &h[h.len() - 4..])
+                    } else {
+                        h.clone()
+                    }
+                };
+                let expires_display = t
+                    .expires_at
+                    .as_deref()
+                    .unwrap_or("Never");
+                let last_used_display = t
+                    .last_used
+                    .as_deref()
+                    .unwrap_or("Never");
+                let delete_url = format!("/api/tokens/{}/delete", t.id);
+
+                format!(
+                    r#"<tr class="border-b border-gray-700 hover:bg-gray-800">
+                        <td class="py-3 px-4">{}</td>
+                        <td class="py-3 px-4 font-mono text-sm">{}</td>
+                        <td class="py-3 px-4">{}</td>
+                        <td class="py-3 px-4 text-sm text-gray-400">{}</td>
+                        <td class="py-3 px-4 text-sm text-gray-400">{}</td>
+                        <td class="py-3 px-4">
+                            <form action="{}" method="post" class="inline"
+                                onsubmit="return confirm('Revoke token \'{}\'? This cannot be undone.')">
+                                <button type="submit" class="text-red-400 hover:underline">Revoke</button>
+                            </form>
+                        </td>
+                    </tr>"#,
+                    t.name, token_display, t.permissions, expires_display, last_used_display,
+                    delete_url, t.name
+                )
+            })
+            .collect()
+    };
+
+    let content = format!(
+        r#"<div class="flex justify-between items-center mb-6">
+            <h1 class="text-2xl font-bold">API Tokens</h1>
+        </div>
+        <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden mb-6">
+            <div class="p-4 border-b border-gray-700">
+                <h2 class="text-lg font-semibold mb-3">Generate New Token</h2>
+                <form action="/api/tokens/create" method="post" class="grid grid-cols-3 gap-4 items-end">
+                    <div>
+                        <label class="block text-sm text-gray-400 mb-1">Name / Description</label>
+                        <input type="text" name="name" required placeholder="ci-runner"
+                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm text-gray-400 mb-1">Permissions</label>
+                        <select name="permissions"
+                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-blue-500">
+                            <option value="read,write">read,write</option>
+                            <option value="read">read only</option>
+                        </select>
+                    </div>
+                    <div>
+                        <button type="submit"
+                            class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded w-full">Generate</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+            <table class="w-full">
+                <thead class="bg-gray-700">
+                    <tr>
+                        <th class="py-3 px-4 text-left">Name</th>
+                        <th class="py-3 px-4 text-left">Token</th>
+                        <th class="py-3 px-4 text-left">Permissions</th>
+                        <th class="py-3 px-4 text-left">Expires</th>
+                        <th class="py-3 px-4 text-left">Last Used</th>
+                        <th class="py-3 px-4 text-left">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>{}</tbody>
+            </table>
+        </div>"#,
+        rows
+    );
+
+    Html(base_html("API Tokens", &content)).into_response()
+}
+
+/// Token create result page (shows the generated token once)
+pub fn token_created_page(token: &str, name: &str) -> Response {
+    let content = format!(
+        r#"<div class="max-w-lg mx-auto mt-10">
+            <div class="bg-gray-800 rounded-lg p-8 border border-gray-700">
+                <h1 class="text-2xl font-bold mb-4 text-green-400">Token Created</h1>
+                <div class="mb-4">
+                    <p class="text-gray-400 mb-1">Name: <span class="text-white">{}</span></p>
+                </div>
+                <div class="mb-6">
+                    <label class="block text-sm text-gray-400 mb-1">Your API Token</label>
+                    <div class="bg-gray-900 border border-gray-600 rounded p-3 font-mono text-sm break-all text-green-300" id="token-value">{}</div>
+                    <button onclick="navigator.clipboard.writeText(document.getElementById('token-value').textContent).then(()=>this.textContent='Copied!')"
+                        class="mt-2 bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded text-sm">Copy to clipboard</button>
+                </div>
+                <div class="bg-yellow-900 border border-yellow-700 text-yellow-300 px-4 py-3 rounded mb-4">
+                    <strong>Warning:</strong> This token will not be shown again. Please save it now.
+                </div>
+                <a href="/ui/tokens" class="text-blue-400 hover:underline">Back to Token Management</a>
+            </div>
+        </div>"#,
+        name, token
+    );
+
+    Html(base_html("Token Created", &content)).into_response()
+}
+
+#[derive(Deserialize)]
+pub struct TokenCreateForm {
+    pub name: String,
+    pub permissions: String,
+}
+
+/// Create a new API token
+pub async fn token_create_handler(
+    State(state): State<AppState>,
+    cookies: HeaderMap,
+    Form(form): Form<TokenCreateForm>,
+) -> Response {
+    if get_session_from_cookies(&state.context.auth, &cookies).is_none() {
+        return axum::response::Redirect::to("/ui/login").into_response();
+    }
+
+    if form.name.is_empty() {
+        return Html(base_html(
+            "Error",
+            r#"<p class="text-red-400">Token name is required</p><a href="/ui/tokens" class="text-blue-400 hover:underline">Back</a>"#,
+        ))
+        .into_response();
+    }
+
+    let token = generate_api_token();
+    let token_hash = hash_token(&token);
+
+    match state
+        .context
+        .db
+        .insert_token(&form.name, &token_hash, &form.permissions, None, "web")
+        .await
+    {
+        Ok(_) => {
+            tracing::info!("Generated API token '{}' via web UI", form.name);
+            token_created_page(&token, &form.name).into_response()
+        }
+        Err(e) => Html(base_html(
+            "Error",
+            &format!(
+                r#"<p class="text-red-400">Failed to create token: {}</p><a href="/ui/tokens" class="text-blue-400 hover:underline">Back</a>"#,
+                e
+            ),
+        ))
+        .into_response(),
+    }
+}
+
+/// Revoke (delete) an API token
+pub async fn token_delete_handler(
+    State(state): State<AppState>,
+    axum::extract::Path(token_id): axum::extract::Path<i64>,
+    cookies: HeaderMap,
+) -> Response {
+    if get_session_from_cookies(&state.context.auth, &cookies).is_none() {
+        return Html(base_html(
+            "Unauthorized",
+            r#"<p class="text-red-400">Unauthorized</p>"#,
+        ))
+        .into_response();
+    }
+
+    match state.context.db.delete_token(token_id).await {
+        Ok(_) => {
+            tracing::info!("Revoked API token ID {} via web UI", token_id);
+            axum::response::Redirect::to("/ui/tokens").into_response()
+        }
+        Err(e) => Html(base_html(
+            "Error",
+            &format!(
+                r#"<p class="text-red-400">Failed to revoke token: {}</p><a href="/ui/tokens" class="text-blue-400 hover:underline">Back</a>"#,
                 e
             ),
         ))

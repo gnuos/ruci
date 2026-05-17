@@ -5,8 +5,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use ruci_core::db::create_repository;
 use ruci_core::db::Repository;
+use ruci_core::db::create_repository;
 use ruci_core::executor::{BashExecutor, ExecutionContext, Executor, Job};
 use ruci_protocol::{JobInfo, RunStatus};
 

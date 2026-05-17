@@ -12,6 +12,12 @@ description.workspace = true
 name = "rucid"
 path = "src/main.rs"
 
+[features]
+default = []
+s3 = ["ruci-core/s3"]
+postgres = ["ruci-core/postgres"]
+mysql = ["ruci-core/mysql"]
+
 [dependencies]
 # Internal
 ruci-core = { workspace = true }

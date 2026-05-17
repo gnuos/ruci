@@ -149,6 +149,37 @@ impl AppContext {
             }
         }
 
+        // Generate admin API token if no rpc_token is configured
+        if config.security.rpc_token.is_none() {
+            match db.list_tokens().await {
+                Ok(tokens) if tokens.is_empty() => {
+                    let token = config::generate_api_token();
+                    let token_hash = config::hash_token(&token);
+                    match db
+                        .insert_token("admin", &token_hash, "read,write", None, "system")
+                        .await
+                    {
+                        Ok(_) => {
+                            tracing::info!("══════════════════════════════════════════════════");
+                            tracing::info!("Generated admin API token: {}", token);
+                            tracing::info!("Add to config: security.rpc_token: \"{}\"", token);
+                            tracing::info!("Or set env: RUCI_TOKEN={}", token);
+                            tracing::info!("══════════════════════════════════════════════════");
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to store admin token: {}", e);
+                        }
+                    }
+                }
+                Ok(_) => {
+                    tracing::debug!("API tokens already exist, skipping auto-generation");
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to check existing tokens: {}", e);
+                }
+            }
+        }
+
         // Run startup cleanup if enabled
         if config.cleanup.enabled {
             tracing::info!("Running startup archive cleanup...");

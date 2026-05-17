@@ -5,21 +5,22 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use futures::{future, prelude::*};
 use tarpc::context::Context;
 use tarpc::server::{self, Channel};
 use tokio_serde::formats::Json;
 
-use crate::config::{Config, RpcMode};
+use crate::config::{Config, RpcMode, hash_token};
 use crate::db::Repository;
 use crate::error::Result;
 use crate::executor::{Executor, Job};
 use crate::queue::{JobQueue, QueueRequest};
 use crate::storage::Storage;
 use ruci_protocol::{
-    ArtifactInfo, DaemonStatus, ErrorCode, JobInfo, JobSubmitResponse, QueueResponse, RuciRpc,
-    RunInfo, TriggerInfo,
+    ArtifactInfo, AuthResponse, DaemonStatus, ErrorCode, JobInfo, JobSubmitResponse, QueueResponse,
+    RuciRpc, RunInfo, TriggerInfo,
 };
 
 /// RPC Server implementation
@@ -71,22 +72,26 @@ impl RpcServer {
 
         tracing::info!("RPC server listening on {}", addr);
 
-        let server = Arc::new(RuciRpcImpl {
+        let base_server = RuciRpcImpl {
             config: self.config.clone(),
             db: self.db.clone(),
             queue: self.queue.clone(),
             executor: self.executor.clone(),
             storage: self.storage.clone(),
             start_time: std::time::Instant::now(),
-        });
+            authenticated: Arc::new(AtomicBool::new(false)),
+        };
 
         let incoming = listener.filter_map(|r| future::ready(r.ok()));
         incoming
             .map(server::BaseChannel::with_defaults)
             .map(|channel| {
-                let server = (*server).clone();
+                let per_conn_server = RuciRpcImpl {
+                    authenticated: Arc::new(AtomicBool::new(false)),
+                    ..base_server.clone()
+                };
                 channel
-                    .execute(server.serve())
+                    .execute(per_conn_server.serve())
                     .for_each(|response| async move {
                         tokio::spawn(response);
                     })
@@ -116,22 +121,26 @@ impl RpcServer {
 
         tracing::info!("RPC server listening on unix://{}", socket_path.display());
 
-        let server = Arc::new(RuciRpcImpl {
+        let base_server = RuciRpcImpl {
             config: self.config.clone(),
             db: self.db.clone(),
             queue: self.queue.clone(),
             executor: self.executor.clone(),
             storage: self.storage.clone(),
             start_time: std::time::Instant::now(),
-        });
+            authenticated: Arc::new(AtomicBool::new(false)),
+        };
 
         let incoming = listener.filter_map(|r| future::ready(r.ok()));
         incoming
             .map(server::BaseChannel::with_defaults)
             .map(|channel| {
-                let server = (*server).clone();
+                let per_conn_server = RuciRpcImpl {
+                    authenticated: Arc::new(AtomicBool::new(false)),
+                    ..base_server.clone()
+                };
                 channel
-                    .execute(server.serve())
+                    .execute(per_conn_server.serve())
                     .for_each(|response| async move {
                         tokio::spawn(response);
                     })
@@ -166,9 +175,20 @@ struct RuciRpcImpl {
     executor: Arc<dyn Executor>,
     storage: Arc<dyn Storage>,
     start_time: std::time::Instant,
+    authenticated: Arc<AtomicBool>,
 }
 
 impl RuciRpcImpl {
+    /// Check if the connection is authenticated.
+    /// Returns true if auth is disabled (no token configured) or connection is authenticated.
+    fn is_authenticated(&self) -> bool {
+        // If no rpc_token is configured, authentication is disabled (backward compatible)
+        if self.config.resolved_rpc_token().is_none() {
+            return true;
+        }
+        self.authenticated.load(Ordering::SeqCst)
+    }
+
     async fn do_queue_job(&self, job_id: String, params: HashMap<String, String>) -> QueueResponse {
         let _job = match self.db.get_job(&job_id).await {
             Ok(Some(j)) => j,
@@ -228,16 +248,79 @@ impl RuciRpcImpl {
 }
 
 impl RuciRpc for RuciRpcImpl {
+    async fn authenticate(self, _: Context, token: String) -> AuthResponse {
+        let expected_token = match self.config.resolved_rpc_token() {
+            Some(t) => t,
+            None => {
+                // No token configured - auth disabled, auto-approve
+                self.authenticated.store(true, Ordering::SeqCst);
+                return AuthResponse::success(vec!["read".to_string(), "write".to_string()]);
+            }
+        };
+
+        if token != expected_token {
+            tracing::warn!("Authentication failed: invalid token");
+            return AuthResponse::error("Invalid token");
+        }
+
+        // Check token hash in database for additional validation
+        let token_hash = hash_token(&token);
+        match self.db.get_token_by_hash(&token_hash).await {
+            Ok(Some(info)) => {
+                // Check expiration
+                if let Some(ref expires_at) = info.expires_at {
+                    if let Ok(expires) =
+                        chrono::NaiveDateTime::parse_from_str(expires_at, "%Y-%m-%d %H:%M:%S")
+                    {
+                        if expires < chrono::Utc::now().naive_utc() {
+                            tracing::warn!("Authentication failed: token expired");
+                            return AuthResponse::error("Token expired");
+                        }
+                    }
+                }
+
+                // Update last used
+                let _ = self.db.update_token_last_used(info.id).await;
+
+                let permissions: Vec<String> = info
+                    .permissions
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .collect();
+
+                self.authenticated.store(true, Ordering::SeqCst);
+                tracing::info!("Authentication successful for token '{}'", info.name);
+                AuthResponse::success(permissions)
+            }
+            Ok(None) => {
+                // Token matches config but not in DB - still authenticate (config-based auth)
+                self.authenticated.store(true, Ordering::SeqCst);
+                tracing::info!("Authentication successful (config-based token)");
+                AuthResponse::success(vec!["read".to_string(), "write".to_string()])
+            }
+            Err(e) => {
+                tracing::error!("Database error during authentication: {}", e);
+                AuthResponse::error("Internal error")
+            }
+        }
+    }
+
     async fn queue_job(
         self,
         _: Context,
         job_id: String,
         params: HashMap<String, String>,
     ) -> QueueResponse {
+        if !self.is_authenticated() {
+            return QueueResponse::error(ErrorCode::Unauthorized, "Not authenticated");
+        }
         self.do_queue_job(job_id, params).await
     }
 
     async fn abort_job(self, _: Context, run_id: String) {
+        if !self.is_authenticated() {
+            return;
+        }
         // First try to abort the executor process
         let abort_result = self.executor.abort(&run_id).await;
         if let Err(e) = &abort_result {
@@ -251,6 +334,9 @@ impl RuciRpc for RuciRpcImpl {
     }
 
     async fn list_jobs(self, _: Context) -> Vec<JobInfo> {
+        if !self.is_authenticated() {
+            return Vec::new();
+        }
         self.db
             .list_jobs()
             .await
@@ -262,10 +348,16 @@ impl RuciRpc for RuciRpcImpl {
     }
 
     async fn get_job(self, _: Context, job_id: String) -> Option<JobInfo> {
+        if !self.is_authenticated() {
+            return None;
+        }
         self.db.get_job(&job_id).await.unwrap_or(None)
     }
 
     async fn delete_job(self, _: Context, job_id: String) -> bool {
+        if !self.is_authenticated() {
+            return false;
+        }
         // Clean up artifact files from storage before DB cascade delete
         let runs = match self.db.list_runs_by_job(&job_id).await {
             Ok(runs) => {
@@ -335,6 +427,9 @@ impl RuciRpc for RuciRpcImpl {
     }
 
     async fn update_job(self, _: Context, job_id: String, name: String) -> bool {
+        if !self.is_authenticated() {
+            return false;
+        }
         match self.db.update_job(&job_id, &name).await {
             Ok(_) => true,
             Err(e) => {
@@ -345,6 +440,9 @@ impl RuciRpc for RuciRpcImpl {
     }
 
     async fn submit_job(self, _: Context, yaml_content: String) -> JobSubmitResponse {
+        if !self.is_authenticated() {
+            return JobSubmitResponse::error(ErrorCode::Unauthorized, "Not authenticated");
+        }
         let job = match Job::parse(&yaml_content) {
             Ok(j) => j,
             Err(e) => {
@@ -414,6 +512,9 @@ impl RuciRpc for RuciRpcImpl {
     }
 
     async fn register_job(self, _: Context, yaml_content: String) -> JobSubmitResponse {
+        if !self.is_authenticated() {
+            return JobSubmitResponse::error(ErrorCode::Unauthorized, "Not authenticated");
+        }
         let job = match Job::parse(&yaml_content) {
             Ok(j) => j,
             Err(e) => {
@@ -454,6 +555,9 @@ impl RuciRpc for RuciRpcImpl {
     }
 
     async fn list_queued(self, _: Context) -> Vec<RunInfo> {
+        if !self.is_authenticated() {
+            return Vec::new();
+        }
         self.db
             .list_runs_by_status("QUEUED")
             .await
@@ -465,6 +569,9 @@ impl RuciRpc for RuciRpcImpl {
     }
 
     async fn list_running(self, _: Context) -> Vec<RunInfo> {
+        if !self.is_authenticated() {
+            return Vec::new();
+        }
         self.db
             .list_runs_by_status("RUNNING")
             .await
@@ -476,6 +583,9 @@ impl RuciRpc for RuciRpcImpl {
     }
 
     async fn list_runs(self, _: Context) -> Vec<RunInfo> {
+        if !self.is_authenticated() {
+            return Vec::new();
+        }
         self.db
             .list_runs()
             .await
@@ -487,6 +597,9 @@ impl RuciRpc for RuciRpcImpl {
     }
 
     async fn list_runs_by_status(self, _: Context, status: String) -> Vec<RunInfo> {
+        if !self.is_authenticated() {
+            return Vec::new();
+        }
         self.db
             .list_runs_by_status(&status)
             .await
@@ -498,6 +611,9 @@ impl RuciRpc for RuciRpcImpl {
     }
 
     async fn list_runs_by_job(self, _: Context, job_id: String) -> Vec<RunInfo> {
+        if !self.is_authenticated() {
+            return Vec::new();
+        }
         self.db
             .list_runs_by_job(&job_id)
             .await
@@ -509,10 +625,16 @@ impl RuciRpc for RuciRpcImpl {
     }
 
     async fn get_run(self, _: Context, run_id: String) -> Option<RunInfo> {
+        if !self.is_authenticated() {
+            return None;
+        }
         self.db.get_run(&run_id).await.unwrap_or(None)
     }
 
     async fn get_run_log(self, _: Context, run_id: String) -> String {
+        if !self.is_authenticated() {
+            return "Not authenticated".to_string();
+        }
         let run = match self.db.get_run(&run_id).await {
             Ok(Some(r)) => r,
             Ok(None) => return format!("Run not found: {}", run_id),
@@ -544,6 +666,16 @@ impl RuciRpc for RuciRpcImpl {
     }
 
     async fn upload_artifact(self, _: Context, run_id: String, local_path: String) -> ArtifactInfo {
+        if !self.is_authenticated() {
+            return ArtifactInfo {
+                id: String::new(),
+                run_id,
+                name: String::new(),
+                size: 0,
+                checksum: String::new(),
+                storage_path: String::new(),
+            };
+        }
         let path = std::path::Path::new(&local_path);
         let key = format!(
             "{}/{}",
@@ -603,6 +735,9 @@ impl RuciRpc for RuciRpcImpl {
     }
 
     async fn download_artifact(self, _: Context, artifact_id: String) -> Vec<u8> {
+        if !self.is_authenticated() {
+            return Vec::new();
+        }
         match self.db.get_artifact(&artifact_id).await.unwrap_or(None) {
             Some(artifact) => self
                 .storage
@@ -614,6 +749,9 @@ impl RuciRpc for RuciRpcImpl {
     }
 
     async fn list_artifacts(self, _: Context, run_id: String) -> Vec<ArtifactInfo> {
+        if !self.is_authenticated() {
+            return Vec::new();
+        }
         self.db
             .list_artifacts(&run_id)
             .await
@@ -625,6 +763,9 @@ impl RuciRpc for RuciRpcImpl {
     }
 
     async fn list_triggers(self, _: Context) -> Vec<TriggerInfo> {
+        if !self.is_authenticated() {
+            return Vec::new();
+        }
         self.db
             .list_triggers()
             .await
@@ -644,6 +785,9 @@ impl RuciRpc for RuciRpcImpl {
     }
 
     async fn create_trigger(self, _: Context, name: String, cron: String, job_id: String) -> bool {
+        if !self.is_authenticated() {
+            return false;
+        }
         let trigger = crate::db::TriggerInfo {
             name,
             cron,
@@ -660,6 +804,9 @@ impl RuciRpc for RuciRpcImpl {
     }
 
     async fn delete_trigger(self, _: Context, name: String) -> bool {
+        if !self.is_authenticated() {
+            return false;
+        }
         match self.db.delete_trigger(&name).await {
             Ok(_) => true,
             Err(e) => {
@@ -670,6 +817,9 @@ impl RuciRpc for RuciRpcImpl {
     }
 
     async fn enable_trigger(self, _: Context, name: String) -> bool {
+        if !self.is_authenticated() {
+            return false;
+        }
         match self.db.set_trigger_enabled(&name, true).await {
             Ok(_) => true,
             Err(e) => {
@@ -680,6 +830,9 @@ impl RuciRpc for RuciRpcImpl {
     }
 
     async fn disable_trigger(self, _: Context, name: String) -> bool {
+        if !self.is_authenticated() {
+            return false;
+        }
         match self.db.set_trigger_enabled(&name, false).await {
             Ok(_) => true,
             Err(e) => {
@@ -690,6 +843,16 @@ impl RuciRpc for RuciRpcImpl {
     }
 
     async fn status(self, _: Context) -> DaemonStatus {
+        if !self.is_authenticated() {
+            return DaemonStatus {
+                version: env!("CARGO_PKG_VERSION").to_string(),
+                uptime_seconds: 0,
+                jobs_queued: 0,
+                jobs_running: 0,
+                jobs_total: 0,
+                runs_total: 0,
+            };
+        }
         let jobs_total = self
             .db
             .list_jobs()
@@ -727,6 +890,100 @@ impl RuciRpc for RuciRpcImpl {
             jobs_running,
             jobs_total,
             runs_total,
+        }
+    }
+
+    async fn generate_token(
+        self,
+        _: Context,
+        name: String,
+        permissions: String,
+    ) -> ruci_protocol::GenerateTokenResponse {
+        if !self.is_authenticated() {
+            return ruci_protocol::GenerateTokenResponse {
+                ok: false,
+                token_id: 0,
+                token: String::new(),
+                error_message: Some("Not authenticated".to_string()),
+            };
+        }
+
+        let token = crate::config::generate_api_token();
+        let token_hash = crate::config::hash_token(&token);
+
+        match self
+            .db
+            .insert_token(&name, &token_hash, &permissions, None, "cli")
+            .await
+        {
+            Ok(id) => {
+                tracing::info!("Generated API token '{}' (ID: {})", name, id);
+                ruci_protocol::GenerateTokenResponse {
+                    ok: true,
+                    token_id: id,
+                    token,
+                    error_message: None,
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to generate token: {}", e);
+                ruci_protocol::GenerateTokenResponse {
+                    ok: false,
+                    token_id: 0,
+                    token: String::new(),
+                    error_message: Some(format!("Database error: {}", e)),
+                }
+            }
+        }
+    }
+
+    async fn list_tokens(self, _: Context) -> Vec<ruci_protocol::TokenInfo> {
+        if !self.is_authenticated() {
+            return Vec::new();
+        }
+
+        match self.db.list_tokens().await {
+            Ok(tokens) => tokens
+                .into_iter()
+                .map(|t| ruci_protocol::TokenInfo {
+                    id: t.id,
+                    name: t.name,
+                    token_hash: {
+                        let h = &t.token_hash;
+                        if h.len() > 12 {
+                            format!("{}...{}", &h[..8], &h[h.len() - 4..])
+                        } else {
+                            h.clone()
+                        }
+                    },
+                    permissions: t.permissions,
+                    created_at: t.created_at,
+                    expires_at: t.expires_at,
+                    last_used: t.last_used,
+                    created_by: t.created_by,
+                })
+                .collect(),
+            Err(e) => {
+                tracing::error!("Failed to list tokens: {}", e);
+                Vec::new()
+            }
+        }
+    }
+
+    async fn revoke_token(self, _: Context, token_id: i64) -> bool {
+        if !self.is_authenticated() {
+            return false;
+        }
+
+        match self.db.delete_token(token_id).await {
+            Ok(_) => {
+                tracing::info!("Revoked API token ID {}", token_id);
+                true
+            }
+            Err(e) => {
+                tracing::error!("Failed to revoke token {}: {}", token_id, e);
+                false
+            }
         }
     }
 }
