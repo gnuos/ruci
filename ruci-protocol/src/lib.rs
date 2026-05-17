@@ -150,6 +150,15 @@ pub struct ArtifactInfo {
     pub storage_path: String,
 }
 
+/// Information about a scheduled trigger
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TriggerInfo {
+    pub name: String,
+    pub cron: String,
+    pub job_id: String,
+    pub enabled: bool,
+}
+
 /// Ruci RPC Service Definition
 #[tarpc::service]
 pub trait RuciRpc {
@@ -178,6 +187,13 @@ pub trait RuciRpc {
     async fn upload_artifact(run_id: RunId, local_path: String) -> ArtifactInfo;
     async fn download_artifact(artifact_id: ArtifactId) -> Vec<u8>;
     async fn list_artifacts(run_id: RunId) -> Vec<ArtifactInfo>;
+
+    // Trigger Management
+    async fn list_triggers() -> Vec<TriggerInfo>;
+    async fn create_trigger(name: String, cron: String, job_id: String) -> bool;
+    async fn delete_trigger(name: String) -> bool;
+    async fn enable_trigger(name: String) -> bool;
+    async fn disable_trigger(name: String) -> bool;
 
     // Daemon Control
     async fn status() -> DaemonStatus;

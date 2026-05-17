@@ -12,8 +12,8 @@ pub use mysql::MysqlRepository;
 pub use postgres::PostgresRepository;
 pub use repository::{
     ArtifactRepository, JobRepository, Repository, RunRepository, SessionInfo, SessionRepository,
-    TriggerRepository, UserRepository, VcsCredentialInfo, VcsCredentialRepository, WebhookEvent,
-    WebhookFilter, WebhookRepository, WebhookSource, WebhookTriggerInfo,
+    TriggerInfo, TriggerRepository, UserRepository, VcsCredentialInfo, VcsCredentialRepository,
+    WebhookEvent, WebhookFilter, WebhookRepository, WebhookSource, WebhookTriggerInfo,
 };
 pub use sqlite::SqliteRepository;
 

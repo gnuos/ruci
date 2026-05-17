@@ -34,6 +34,12 @@ enum Commands {
         action: RunAction,
     },
 
+    /// Trigger management
+    Trigger {
+        #[command(subcommand)]
+        action: TriggerAction,
+    },
+
     /// Submit a job (register + queue immediately)
     Submit {
         #[arg(short, long, help = "Job file path")]
@@ -171,6 +177,42 @@ enum ArtifactAction {
     },
 }
 
+#[derive(Subcommand)]
+enum TriggerAction {
+    /// List all triggers
+    List,
+
+    /// Create a new trigger
+    Create {
+        #[arg(help = "Trigger name")]
+        name: String,
+
+        #[arg(help = "Cron expression (6-field: second minute hour day month weekday)")]
+        cron: String,
+
+        #[arg(help = "Job ID to trigger")]
+        job_id: String,
+    },
+
+    /// Delete a trigger
+    Delete {
+        #[arg(help = "Trigger name")]
+        name: String,
+    },
+
+    /// Enable a trigger
+    Enable {
+        #[arg(help = "Trigger name")]
+        name: String,
+    },
+
+    /// Disable a trigger
+    Disable {
+        #[arg(help = "Trigger name")]
+        name: String,
+    },
+}
+
 #[derive(Args)]
 struct CompletionsCmd {
     #[arg(value_enum, default_value = "bash")]
@@ -194,6 +236,7 @@ async fn main() -> anyhow::Result<()> {
     match cli.command {
         Commands::Job { action } => handle_job(cli.server, action).await?,
         Commands::Run { action } => handle_run(cli.server, action).await?,
+        Commands::Trigger { action } => handle_trigger(cli.server, action).await?,
         Commands::Submit {
             file,
             wait,
@@ -410,6 +453,81 @@ async fn handle_run(server: Option<String>, action: RunAction) -> anyhow::Result
                 std::io::stdout().write_all(&data)?;
             }
         },
+    }
+
+    Ok(())
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Trigger handlers
+// ─────────────────────────────────────────────────────────────────
+
+async fn handle_trigger(server: Option<String>, action: TriggerAction) -> anyhow::Result<()> {
+    let client = connect(server.as_deref()).await?;
+
+    match action {
+        TriggerAction::List => {
+            let triggers = client.list_triggers(tarpc::context::current()).await?;
+            if triggers.is_empty() {
+                println!("No triggers configured.");
+                return Ok(());
+            }
+            println!("{:<20} {:<20} {:<20} STATUS", "NAME", "CRON", "JOB ID");
+            println!("{}", "-".repeat(80));
+            for t in triggers {
+                let status = if t.enabled { "Enabled" } else { "Disabled" };
+                println!("{:<20} {:<20} {:<20} {}", t.name, t.cron, t.job_id, status);
+            }
+        }
+        TriggerAction::Create { name, cron, job_id } => {
+            let success = client
+                .create_trigger(
+                    tarpc::context::current(),
+                    name.clone(),
+                    cron.clone(),
+                    job_id.clone(),
+                )
+                .await?;
+            if success {
+                println!("Created trigger: {} ({} -> {})", name, cron, job_id);
+            } else {
+                eprintln!("Failed to create trigger: {}", name);
+                std::process::exit(1);
+            }
+        }
+        TriggerAction::Delete { name } => {
+            let success = client
+                .delete_trigger(tarpc::context::current(), name.clone())
+                .await?;
+            if success {
+                println!("Deleted trigger: {}", name);
+            } else {
+                eprintln!("Failed to delete trigger: {}", name);
+                std::process::exit(1);
+            }
+        }
+        TriggerAction::Enable { name } => {
+            let success = client
+                .enable_trigger(tarpc::context::current(), name.clone())
+                .await?;
+            if success {
+                println!("Enabled trigger: {}", name);
+            } else {
+                eprintln!("Failed to enable trigger: {}", name);
+                std::process::exit(1);
+            }
+        }
+        TriggerAction::Disable { name } => {
+            let success = client
+                .disable_trigger(tarpc::context::current(), name.clone())
+                .await?;
+            if success {
+                println!("Disabled trigger: {}", name);
+            } else {
+                eprintln!("Failed to disable trigger: {}", name);
+                std::process::exit(1);
+            }
+        }
     }
 
     Ok(())

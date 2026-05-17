@@ -228,6 +228,9 @@ pub trait TriggerRepository: Send + Sync {
 
     /// Update trigger enabled status
     async fn set_trigger_enabled(&self, name: &str, enabled: bool) -> Result<()>;
+
+    /// Delete a trigger
+    async fn delete_trigger(&self, name: &str) -> Result<()>;
 }
 
 /// Repository trait for Webhook operations

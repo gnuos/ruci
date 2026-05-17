@@ -416,6 +416,14 @@ async fn run_server(config: Config, socket_path: PathBuf) -> anyhow::Result<bool
                     "/api/triggers/:name/disable",
                     post(handlers::trigger_disable_handler),
                 )
+                .route(
+                    "/api/triggers/create",
+                    post(handlers::trigger_create_handler),
+                )
+                .route(
+                    "/api/triggers/:name/delete",
+                    post(handlers::trigger_delete_handler),
+                )
                 .route("/api/webhooks", post(handlers::webhook_create_handler))
                 .route(
                     "/api/webhooks/:name/enable",

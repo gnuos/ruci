@@ -19,7 +19,7 @@ use crate::queue::{JobQueue, QueueRequest};
 use crate::storage::Storage;
 use ruci_protocol::{
     ArtifactInfo, DaemonStatus, ErrorCode, JobInfo, JobSubmitResponse, QueueResponse, RuciRpc,
-    RunInfo,
+    RunInfo, TriggerInfo,
 };
 
 /// RPC Server implementation
@@ -301,8 +301,7 @@ impl RuciRpc for RuciRpcImpl {
 
         // Clean up archive files for each run
         for run in &runs {
-            let archive_path =
-                format!("{}/{}.tar", self.config.paths.archive_dir, run.id);
+            let archive_path = format!("{}/{}.tar", self.config.paths.archive_dir, run.id);
             if let Err(e) = tokio::fs::remove_file(&archive_path).await {
                 if e.kind() != std::io::ErrorKind::NotFound {
                     tracing::warn!("Failed to delete archive {}: {}", archive_path, e);
@@ -623,6 +622,71 @@ impl RuciRpc for RuciRpcImpl {
                 e
             })
             .unwrap_or_default()
+    }
+
+    async fn list_triggers(self, _: Context) -> Vec<TriggerInfo> {
+        self.db
+            .list_triggers()
+            .await
+            .map_err(|e| {
+                tracing::warn!("Failed to list triggers: {}", e);
+                e
+            })
+            .unwrap_or_default()
+            .into_iter()
+            .map(|t| TriggerInfo {
+                name: t.name,
+                cron: t.cron,
+                job_id: t.job_id,
+                enabled: t.enabled,
+            })
+            .collect()
+    }
+
+    async fn create_trigger(self, _: Context, name: String, cron: String, job_id: String) -> bool {
+        let trigger = crate::db::TriggerInfo {
+            name,
+            cron,
+            job_id,
+            enabled: true,
+        };
+        match self.db.upsert_trigger(&trigger).await {
+            Ok(_) => true,
+            Err(e) => {
+                tracing::error!("Failed to create trigger: {}", e);
+                false
+            }
+        }
+    }
+
+    async fn delete_trigger(self, _: Context, name: String) -> bool {
+        match self.db.delete_trigger(&name).await {
+            Ok(_) => true,
+            Err(e) => {
+                tracing::error!("Failed to delete trigger {}: {}", name, e);
+                false
+            }
+        }
+    }
+
+    async fn enable_trigger(self, _: Context, name: String) -> bool {
+        match self.db.set_trigger_enabled(&name, true).await {
+            Ok(_) => true,
+            Err(e) => {
+                tracing::error!("Failed to enable trigger {}: {}", name, e);
+                false
+            }
+        }
+    }
+
+    async fn disable_trigger(self, _: Context, name: String) -> bool {
+        match self.db.set_trigger_enabled(&name, false).await {
+            Ok(_) => true,
+            Err(e) => {
+                tracing::error!("Failed to disable trigger {}: {}", name, e);
+                false
+            }
+        }
     }
 
     async fn status(self, _: Context) -> DaemonStatus {

@@ -14,7 +14,7 @@ use axum::{
 use serde::Deserialize;
 
 use crate::AppContext;
-use ruci_core::db::{WebhookEvent, WebhookFilter, WebhookSource, WebhookTriggerInfo};
+use ruci_core::db::{TriggerInfo, WebhookEvent, WebhookFilter, WebhookSource, WebhookTriggerInfo};
 
 /// Log and unwrap a DB result, returning default on error
 async fn db_or_default<T: Default>(result: Result<T, ruci_core::error::Error>, op: &str) -> T {
@@ -927,6 +927,7 @@ pub async fn triggers_page(State(state): State<AppState>, cookies: HeaderMap) ->
 
     let triggers = state.context.db.list_triggers().await.unwrap_or_default();
     let config_triggers = &state.context.config.triggers;
+    let jobs = state.context.db.list_jobs().await.unwrap_or_default();
 
     let rows: String = if triggers.is_empty() && config_triggers.is_empty() {
         r#"<tr><td colspan="5" class="text-center py-8 text-gray-500">No triggers configured</td></tr>"#.to_string()
@@ -963,6 +964,7 @@ pub async fn triggers_page(State(state): State<AppState>, cookies: HeaderMap) ->
                     format!("/api/triggers/{}/enable", name)
                 };
                 let toggle_text = if *enabled { "Disable" } else { "Enable" };
+                let delete_url = format!("/api/triggers/{}/delete", name);
 
                 format!(
                     r#"<tr class="border-b border-gray-700 hover:bg-gray-800">
@@ -970,21 +972,58 @@ pub async fn triggers_page(State(state): State<AppState>, cookies: HeaderMap) ->
                         <td class="py-3 px-4 font-mono text-sm">{}</td>
                         <td class="py-3 px-4">{}</td>
                         <td class="py-3 px-4">{}</td>
-                        <td class="py-3 px-4">
+                        <td class="py-3 px-4 space-x-2">
                             <form action="{}" method="post" class="inline">
                                 <button type="submit" class="text-blue-400 hover:underline">{}</button>
                             </form>
+                            <form action="{}" method="post" class="inline" onsubmit="return confirm('Delete trigger \'{}\'?')">
+                                <button type="submit" class="text-red-400 hover:underline">Delete</button>
+                            </form>
                         </td>
                     </tr>"#,
-                    name, cron, job, status_badge, toggle_url, toggle_text
+                    name, cron, job, status_badge, toggle_url, toggle_text, delete_url, name
                 )
             })
             .collect()
     };
 
+    let job_options: String = jobs
+        .iter()
+        .map(|j| format!(r#"<option value="{}">{}</option>"#, j.id, j.name))
+        .collect();
+
     let content = format!(
         r#"<div class="flex justify-between items-center mb-6">
             <h1 class="text-2xl font-bold">Scheduled Triggers</h1>
+        </div>
+        <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden mb-6">
+            <div class="p-4 border-b border-gray-700">
+                <h2 class="text-lg font-semibold mb-3">Create New Trigger</h2>
+                <form action="/api/triggers/create" method="post" class="grid grid-cols-4 gap-4 items-end">
+                    <div>
+                        <label class="block text-sm text-gray-400 mb-1">Name</label>
+                        <input type="text" name="name" required placeholder="daily-build"
+                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm text-gray-400 mb-1">Cron Expression</label>
+                        <input type="text" name="cron" required placeholder="0 0 0 * * *"
+                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white font-mono focus:outline-none focus:border-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm text-gray-400 mb-1">Job</label>
+                        <select name="job_id" required
+                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-blue-500">
+                            <option value="">Select a job...</option>
+                            {}
+                        </select>
+                    </div>
+                    <div>
+                        <button type="submit"
+                            class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded w-full">Create</button>
+                    </div>
+                </form>
+            </div>
         </div>
         <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
             <table class="w-full">
@@ -1004,7 +1043,7 @@ pub async fn triggers_page(State(state): State<AppState>, cookies: HeaderMap) ->
             <p>Cron format: second minute hour day month weekday</p>
             <p>Examples: "0 0 * * * *" (every hour), "0 0 0 * * *" (daily at midnight), "0 */5 * * * *" (every 5 minutes)</p>
         </div>"#,
-        rows
+        job_options, rows
     );
 
     Html(base_html("Triggers", &content)).into_response()
@@ -1104,6 +1143,96 @@ pub async fn api_triggers_handler(State(state): State<AppState>) -> impl IntoRes
     }
 
     axum::Json(serde_json::json!({ "triggers": all_triggers }))
+}
+
+#[derive(Deserialize)]
+pub struct TriggerForm {
+    pub name: String,
+    pub cron: String,
+    pub job_id: String,
+}
+
+/// Create or update a trigger
+pub async fn trigger_create_handler(
+    State(state): State<AppState>,
+    cookies: HeaderMap,
+    Form(form): Form<TriggerForm>,
+) -> Response {
+    if get_session_from_cookies(&state.context.auth, &cookies).is_none() {
+        return Html(base_html(
+            "Unauthorized",
+            r#"<p class="text-red-400">Unauthorized</p>"#,
+        ))
+        .into_response();
+    }
+
+    if form.name.is_empty() || form.cron.is_empty() || form.job_id.is_empty() {
+        return Html(base_html(
+            "Error",
+            r#"<p class="text-red-400">All fields are required</p><a href="/ui/triggers" class="text-blue-400 hover:underline">Back</a>"#,
+        ))
+        .into_response();
+    }
+
+    let trigger = TriggerInfo {
+        name: form.name.clone(),
+        cron: form.cron.clone(),
+        job_id: form.job_id.clone(),
+        enabled: true,
+    };
+
+    match state.context.db.upsert_trigger(&trigger).await {
+        Ok(_) => {
+            tracing::info!(trigger = %form.name, "Trigger created");
+            axum::response::Redirect::to("/ui/triggers").into_response()
+        }
+        Err(e) => {
+            tracing::error!(trigger = %form.name, error = %e, "Failed to create trigger");
+            Html(base_html(
+                "Error",
+                &format!(
+                    r#"<p class="text-red-400">Failed to create trigger: {}</p><a href="/ui/triggers" class="text-blue-400 hover:underline">Back</a>"#,
+                    e
+                ),
+            ))
+            .into_response()
+        }
+    }
+}
+
+/// Delete a trigger
+pub async fn trigger_delete_handler(
+    State(state): State<AppState>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+    cookies: HeaderMap,
+) -> Response {
+    if get_session_from_cookies(&state.context.auth, &cookies).is_none() {
+        return Html(base_html(
+            "Unauthorized",
+            r#"<p class="text-red-400">Unauthorized</p>"#,
+        ))
+        .into_response();
+    }
+
+    let name = urlencoding::decode(&name).unwrap_or_default().to_string();
+
+    match state.context.db.delete_trigger(&name).await {
+        Ok(_) => {
+            tracing::info!(trigger = %name, "Trigger deleted");
+            axum::response::Redirect::to("/ui/triggers").into_response()
+        }
+        Err(e) => {
+            tracing::error!(trigger = %name, error = %e, "Failed to delete trigger");
+            Html(base_html(
+                "Error",
+                &format!(
+                    r#"<p class="text-red-400">Failed to delete trigger: {}</p><a href="/ui/triggers" class="text-blue-400 hover:underline">Back</a>"#,
+                    e
+                ),
+            ))
+            .into_response()
+        }
+    }
 }
 
 /// Webhooks list page handler
@@ -1446,10 +1575,7 @@ pub async fn webhook_delete_handler(
 }
 
 /// Change password page handler
-pub async fn change_password_page(
-    State(state): State<AppState>,
-    cookies: HeaderMap,
-) -> Response {
+pub async fn change_password_page(State(state): State<AppState>, cookies: HeaderMap) -> Response {
     if get_session_from_cookies(&state.context.auth, &cookies).is_none() {
         return axum::response::Redirect::to("/ui/login").into_response();
     }

@@ -594,6 +594,16 @@ impl TriggerRepository for PostgresRepository {
 
         Ok(())
     }
+
+    async fn delete_trigger(&self, name: &str) -> Result<()> {
+        sqlx::query("DELETE FROM triggers WHERE name = $1")
+            .bind(name)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DbError::Query(e.to_string()))?;
+
+        Ok(())
+    }
 }
 
 #[derive(FromRow)]
