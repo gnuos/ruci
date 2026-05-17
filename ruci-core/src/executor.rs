@@ -70,7 +70,7 @@ impl Job {
         }
 
         fn default_timeout() -> u64 {
-            3600
+            1800
         }
 
         fn default_checkout() -> bool {
@@ -467,7 +467,7 @@ mod tests {
         let yaml = r#"
 name: test-job
 context: default
-timeout: 3600
+timeout: 600
 steps:
   - name: build
     command: echo hello
@@ -674,7 +674,7 @@ steps:
 name: numeric-env-job
 env:
   PORT: "8080"
-  TIMEOUT: "3600"
+  TIMEOUT: "600"
 steps:
   - name: test
     command: echo $PORT
@@ -789,7 +789,7 @@ steps:
         assert!(context.is_ok());
         let ctx = context.unwrap();
         assert_eq!(ctx.max_parallel, 4);
-        assert_eq!(ctx.timeout, 3600);
+        assert_eq!(ctx.timeout, 1800);
     }
 
     #[test]

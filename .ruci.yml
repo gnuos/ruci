@@ -1,0 +1,24 @@
+name: rucicd
+context: default
+timeout: 900
+
+vcs:
+  url: "https://github.com/gnuos/ruci.git"
+  repository: "ruci"
+  branch: "main"
+  submodules: false
+
+checkout: true
+
+env:
+  CI: "true"
+
+steps:
+  - name: test
+    command: make test
+  - name: build
+    command: make build
+  - name: package
+    artifacts:
+      - "bin/ruci"
+      - "bin/rucid"
