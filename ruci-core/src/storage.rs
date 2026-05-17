@@ -381,7 +381,7 @@ pub async fn create_storage(config: &StorageConfig) -> Result<Box<dyn Storage>> 
             let path = config.bucket.as_deref().unwrap_or("/var/lib/ruci/archive");
             Ok(Box::new(LocalStorage::new(path, max_size_mb)))
         }
-        StorageType::Rustfs => {
+        StorageType::Rustfs | StorageType::Minio | StorageType::S3 => {
             let storage = S3Storage::new(config).await?;
             Ok(Box::new(storage))
         }
@@ -749,7 +749,7 @@ mod tests {
             secret_key: Some(
                 std::env::var("S3_SECRET_KEY").unwrap_or_else(|_| "minioadmin".to_string()),
             ),
-            region: std::env::var("S3_REGION").unwrap_or_else(|_| "us-east-1".to_string()),
+            region: Some(std::env::var("S3_REGION").unwrap_or_else(|_| "us-east-1".to_string())),
             max_artifact_size_mb: Some(1000),
         }
     }

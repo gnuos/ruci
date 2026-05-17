@@ -53,7 +53,6 @@ pub struct ServerConfig {
     pub web_host: String,
     pub web_port: u16,
     pub rpc_mode: RpcMode,
-    pub unix_socket_name: String,
 }
 
 impl Default for ServerConfig {
@@ -64,7 +63,6 @@ impl Default for ServerConfig {
             web_host: "0.0.0.0".to_string(),
             web_port: 8080,
             rpc_mode: RpcMode::Tcp,
-            unix_socket_name: "rucid".to_string(),
         }
     }
 }
@@ -101,7 +99,7 @@ pub struct StorageConfig {
     pub bucket: Option<String>,
     pub access_key: Option<String>,
     pub secret_key: Option<String>,
-    pub region: String,
+    pub region: Option<String>,
     /// Maximum artifact size in MB (default: 100)
     pub max_artifact_size_mb: Option<u64>,
 }
@@ -114,7 +112,7 @@ impl Default for StorageConfig {
             bucket: None,
             access_key: None,
             secret_key: None,
-            region: "us-east-1".to_string(),
+            region: None,
             max_artifact_size_mb: Some(100),
         }
     }
@@ -127,26 +125,28 @@ pub enum StorageType {
     #[default]
     Local,
     Rustfs,
+    Minio,
+    S3,
 }
 
 /// Paths configuration
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PathsConfig {
     pub db_dir: String,
-    pub jobs_dir: String,
-    pub run_dir: String,
-    pub archive_dir: String,
     pub log_dir: String,
+    pub run_dir: String,
+    pub jobs_dir: String,
+    pub archive_dir: String,
 }
 
 impl Default for PathsConfig {
     fn default() -> Self {
         Self {
             db_dir: "/var/lib/ruci/db".to_string(),
-            jobs_dir: "/var/lib/ruci/jobs".to_string(),
-            run_dir: "/var/lib/ruci/run".to_string(),
-            archive_dir: "/var/lib/ruci/archive".to_string(),
             log_dir: "/var/log/ruci".to_string(),
+            run_dir: "/var/lib/ruci/run".to_string(),
+            jobs_dir: "/var/lib/ruci/jobs".to_string(),
+            archive_dir: "/var/lib/ruci/archive".to_string(),
         }
     }
 }
@@ -289,7 +289,7 @@ impl Default for WebConfig {
 impl ServerConfig {
     /// Get the socket path for Unix socket mode
     pub fn socket_path(&self) -> PathBuf {
-        PathBuf::from(format!("/tmp/{}.sock", self.unix_socket_name))
+        PathBuf::from("/tmp/rucid.sock")
     }
 }
 
@@ -339,15 +339,18 @@ impl Config {
         // 1. Current directory
         if let Ok(cwd) = std::env::current_dir() {
             paths.push(cwd.join("ruci.yaml"));
+            paths.push(cwd.join("ruci.yml"));
         }
 
         // 2. User config directory
         if let Some(home) = dirs::home_dir() {
             paths.push(home.join(".config").join("ruci").join("ruci.yaml"));
+            paths.push(home.join(".config").join("ruci").join("ruci.yml"));
         }
 
         // 3. System config
         paths.push(std::path::PathBuf::from("/etc/ruci/ruci.yaml"));
+        paths.push(std::path::PathBuf::from("/etc/ruci/ruci.yml"));
 
         paths
     }
@@ -483,16 +486,16 @@ impl Config {
 
         // Validate storage type settings
         match self.storage.storage_type {
-            StorageType::Rustfs => {
+            StorageType::Rustfs | StorageType::Minio | StorageType::S3 => {
                 if self.storage.endpoint.is_none() {
                     return Err(InvalidValue(
-                        "storage.endpoint is required when storage.type is 'rustfs'".to_string(),
+                        "storage.endpoint is required when storage.type is 'rustfs' or 'minio' or 's3'".to_string(),
                     )
                     .into());
                 }
                 if self.storage.bucket.is_none() {
                     return Err(InvalidValue(
-                        "storage.bucket is required when storage.type is 'rustfs'".to_string(),
+                        "storage.bucket is required when storage.type is 'rustfs' or 'minio' or 's3'".to_string(),
                     )
                     .into());
                 }

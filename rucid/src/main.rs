@@ -113,7 +113,7 @@ struct Cli {
     pid_file: Option<PathBuf>,
 
     #[arg(long, help = "RPC socket path")]
-    socket_path: Option<PathBuf>,
+    socket: Option<PathBuf>,
 }
 
 async fn status_handler(State(_state): State<web::handlers::AppState>) -> Json<serde_json::Value> {
@@ -229,9 +229,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Determine socket path: CLI arg > config
-    let socket_path = cli
-        .socket_path
-        .unwrap_or_else(|| config.server.socket_path());
+    let socket_path = cli.socket.unwrap_or_else(|| config.server.socket_path());
 
     // Main server loop - supports hot reload via SIGHUP
     loop {
@@ -838,7 +836,9 @@ fn show_config(config: Config) {
     // Storage configuration
     println!("Storage:");
     println!("  Type: {:?}", config.storage.storage_type);
-    println!("  Region: {}", config.storage.region);
+    if let Some(region) = &config.storage.region {
+        println!("  Region: {}", region);
+    }
     if let Some(endpoint) = &config.storage.endpoint {
         println!("  Endpoint: {}", endpoint);
     }
@@ -1000,12 +1000,7 @@ fn validate_config(file: Option<String>) {
 
     // Check database
     if config.database.url.starts_with("sqlite://") {
-        let db_path = config
-            .database
-            .url
-            .strip_prefix("sqlite://")
-            .unwrap_or("")
-            .trim_start_matches('/');
+        let db_path = config.database.url.strip_prefix("sqlite://").unwrap_or("");
 
         if db_path.is_empty() || db_path == ":memory:" {
             println!("  ⚠ Database: using in-memory SQLite");

@@ -3,12 +3,11 @@
 
 # Server configuration
 server:
-  host: "0.0.0.0"      # RPC bind address
-  port: 7741             # RPC port
-  web_host: "0.0.0.0"  # Web UI bind address
-  web_port: 8080         # Web UI port
-  rpc_mode: "tcp"        # "tcp" or "unix"
-  unix_socket_name: "rucid"  # Unix socket name (when rpc_mode is "unix")
+  host: "0.0.0.0"       # RPC bind address
+  port: 7741            # RPC port
+  web_host: "0.0.0.0"   # Web UI bind address
+  web_port: 8080        # Web UI port
+  rpc_mode: "tcp"       # "tcp" or "unix"
 
 # Database configuration
 database:
@@ -21,8 +20,8 @@ database:
 
 # Storage configuration
 storage:
-  type: "local"          # "local" or "rustfs" (S3)
-  region: "us-east-1"
+  type: "local"         # "local" or "rustfs" or "minio" or "s3"
+  # region: "cn"
   # For S3/Rustfs:
   # type: "rustfs"
   # endpoint: "http://localhost:9000"
@@ -33,10 +32,10 @@ storage:
 # Paths configuration
 paths:
   db_dir: "/var/lib/ruci/db"            # SQLite and KV database directory
-  jobs_dir: "/var/lib/ruci/jobs"        # Job definitions storage
-  run_dir: "/var/lib/ruci/run"          # Build working directories
-  archive_dir: "/var/lib/ruci/archive"  # Archived artifacts
   log_dir: "/var/log/ruci"              # Log files directory
+  run_dir: "/var/lib/ruci/run"          # Build working directories
+  jobs_dir: "/var/lib/ruci/jobs"        # Job definitions storage
+  archive_dir: "/var/lib/ruci/archive"  # Archived artifacts
 
 # Context configuration (resource limits per context)
 contexts:
